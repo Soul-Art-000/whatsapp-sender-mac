@@ -1,0 +1,38 @@
+{
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devPath": "frontend",
+    "distDir": "frontend",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "whatsapp-sender",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true,
+      "shell": {
+        "all": true,
+        "open": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.whatsapp.sender"
+    },
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 600,
+        "resizable": true,
+        "title": "WhatsApp Sender",
+        "width": 800
+      }
+    ]
+  }
+}

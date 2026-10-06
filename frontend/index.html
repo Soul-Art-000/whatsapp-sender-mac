@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Sender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
+  <style>
+    :root {
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .button-spring {
+      transition: transform 0.4s var(--ease-out), background-color 0.2s;
+    }
+    .button-spring:active {
+      transform: scale(0.95);
+    }
+    .fade-enter {
+      animation: fadeIn 0.4s var(--ease-out) forwards;
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    @keyframes fadeIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+    /* Hide scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background-color: #e5e7eb; border-radius: 10px; }
+  </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-gray-800 bg-gray-50">
+
+  <!-- Header -->
+  <header class="h-16 border-b bg-white flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
+    <div class="flex items-center gap-4">
+      <h1 class="text-xl font-bold">Ana Kişiler</h1>
+      <button id="waConnectBtn" class="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 button-spring font-medium">
+        WhatsApp Bağla
+      </button>
+    </div>
+    <div class="flex gap-2">
+      <button id="importBtn" class="button-spring bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-200 font-medium">
+        İçe Aktar (.vcf / .csv)
+      </button>
+      <button id="addContactBtn" class="button-spring bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 font-medium">
+        + Kişi Ekle
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 flex overflow-hidden">
+    
+    <!-- Contacts List -->
+    <div class="flex-1 flex flex-col p-6 overflow-hidden">
+      <div class="bg-white rounded-xl shadow-sm border flex flex-col flex-1 overflow-hidden">
+        
+        <!-- Search Bar -->
+        <div class="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          <input type="text" id="searchInput" class="flex-1 outline-none text-sm text-gray-700 placeholder-gray-400 bg-transparent" placeholder="İsim veya numaraya göre ara..." />
+        </div>
+        <!-- Table Header -->
+        <div class="flex items-center px-4 py-3 border-b bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          <div class="w-10">
+            <input type="checkbox" id="selectAllCheckbox" class="rounded border-gray-300 w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+          </div>
+          <div class="w-1/3">İsim</div>
+          <div class="w-1/3">Telefon</div>
+          <div class="flex-1 text-right">İşlem</div>
+        </div>
+
+        <!-- Table Body -->
+        <div id="contactList" class="flex-1 overflow-y-auto divide-y">
+          <!-- Rows injected here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Message Composer Sidebar -->
+    <aside class="w-96 bg-white border-l flex flex-col shadow-lg z-20">
+      <div class="p-6 flex flex-col h-full">
+        <h2 class="text-lg font-bold mb-4">Toplu Mesaj Gönder</h2>
+        
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm text-gray-500">Seçili Kişi Sayısı: <span id="selectedCount" class="font-bold text-blue-600">0</span></div>
+          <button id="saveGroupBtn" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded transition-colors hidden">Grup Olarak Kaydet</button>
+        </div>
+        
+        <div class="mb-4 flex items-center gap-2">
+          <select id="groupSelect" class="flex-1 border rounded p-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white hidden">
+            <option value="">-- Kayıtlı Grup Seç (Hızlı Seçim) --</option>
+          </select>
+          <button id="deleteGroupBtn" class="text-red-500 hover:bg-red-50 p-2 rounded transition-colors hidden" title="Seçili Grubu Sil">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          </button>
+        </div>
+        <textarea id="messageBox" class="w-full border rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 mb-4" placeholder="Mesajınızı yazın... İsimle hitap etmek için /isim yazabilirsiniz. Örn: Merhaba /isim, nasılsın?"></textarea>
+
+        <div class="mb-4">
+          <button id="attachImageBtn" class="w-full bg-gray-50 border border-dashed border-gray-300 text-gray-600 py-3 rounded-lg text-sm hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            <span id="imageName">Resim Ekle (İsteğe Bağlı)</span>
+          </button>
+        </div>
+
+        <button id="sendBtn" class="button-spring w-full bg-green-600 text-white font-medium py-3 rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          Seçili Kişilere Gönder
+        </button>
+        
+        <div id="sendStatus" class="mt-4 text-center text-sm font-medium text-gray-500 hidden"></div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- Modals -->
+  <!-- QR Modal -->
+  <div id="qrModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-xl shadow-lg flex flex-col items-center">
+      <h3 class="text-lg font-bold mb-2">WhatsApp Web ile Tara</h3>
+      <p class="text-sm text-gray-500 mb-4" id="qrStatus">QR kod oluşturuluyor...</p>
+      <div id="qrcode" class="p-4 bg-white border rounded min-w-[256px] min-h-[256px]"></div>
+      <button id="closeQrBtn" class="mt-4 text-sm text-gray-500 hover:text-gray-800">İptal</button>
+    </div>
+  </div>
+
+  <!-- Contact Prompt Modal -->
+  <div id="contactPromptModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-xl shadow-lg w-80">
+      <h3 class="text-lg font-bold mb-4">Kişi Ekle</h3>
+      <input type="text" id="contactNameInput" class="w-full border p-2 rounded mb-2 text-sm" placeholder="İsim (Örn: Ahmet Yılmaz)" />
+      <input type="text" id="contactPhoneInput" class="w-full border p-2 rounded mb-4 text-sm" placeholder="Telefon (Örn: +905551234567)" />
+      <div class="flex justify-end gap-2">
+        <button id="cancelContactBtn" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm font-medium">İptal</button>
+        <button id="saveContactBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">Kaydet</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Prompt Modal -->
+  <div id="groupPromptModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-xl shadow-lg w-80">
+      <h3 class="text-lg font-bold mb-4">Grup Olarak Kaydet</h3>
+      <input type="text" id="groupNameInput" class="w-full border p-2 rounded mb-4 text-sm" placeholder="Grup Adı (Örn: Müşteriler)" />
+      <div class="flex justify-end gap-2">
+        <button id="cancelGroupBtn" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm font-medium">İptal</button>
+        <button id="saveGroupConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">Kaydet</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.tauri;
+    const { open } = window.__TAURI__.dialog;
+    const { listen } = window.__TAURI__.event;
+    
+    let contacts = [];
+    let selectedContactIds = new Set();
+    let attachedImagePath = null;
+
+    async function loadData() {
+      try {
+        contacts = await invoke('get_contacts');
+        renderContacts();
+        await loadGroups();
+      } catch (e) {
+        console.error("Veri yükleme hatası:", e);
+      }
+    }
+
+    let groups = [];
+    async function loadGroups() {
+      try {
+        groups = await invoke('get_groups');
+        const select = document.getElementById('groupSelect');
+        if (groups.length > 0) {
+          select.classList.remove('hidden');
+          select.innerHTML = '<option value="">-- Kayıtlı Grup Seç (Hızlı Seçim) --</option>' + 
+            groups.map(g => `<option value="${g.name}">${g.name} (${g.contact_ids.length} Kişi)</option>`).join('');
+        } else {
+          select.classList.add('hidden');
+        }
+      } catch (e) {
+        console.error("Grup yükleme hatası:", e);
+      }
+    }
+
+    function updateSelectedCount() {
+      const count = selectedContactIds.size;
+      document.getElementById('selectedCount').textContent = count;
+      
+      const saveBtn = document.getElementById('saveGroupBtn');
+      if (count > 0) saveBtn.classList.remove('hidden');
+      else saveBtn.classList.add('hidden');
+    }
+
+    function renderContacts() {
+      const container = document.getElementById('contactList');
+      const query = document.getElementById('searchInput').value.toLowerCase().trim();
+      
+      const filtered = query 
+        ? contacts.filter(c => c.name.toLowerCase().includes(query) || c.phone.toLowerCase().includes(query))
+        : contacts;
+
+      if (filtered.length === 0) {
+        container.innerHTML = contacts.length === 0 
+          ? '<div class="text-center text-gray-400 mt-10 text-sm">Listeniz boş. Lütfen sağ üstten kişileri içe aktarın.</div>'
+          : '<div class="text-center text-gray-400 mt-10 text-sm">Arama sonucu bulunamadı.</div>';
+        return;
+      }
+
+      container.innerHTML = filtered.map((c, i) => `
+        <div class="flex items-center px-4 py-3 hover:bg-gray-50 fade-enter" style="animation-delay: ${Math.min(i * 10, 300)}ms">
+          <div class="w-10">
+            <input type="checkbox" value="${c.id}" class="contact-checkbox rounded border-gray-300 w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" ${selectedContactIds.has(c.id) ? 'checked' : ''} />
+          </div>
+          <div class="w-1/3 font-medium text-sm">${c.name}</div>
+          <div class="w-1/3 text-gray-500 text-sm">${c.phone}</div>
+          <div class="flex-1 text-right">
+            <button onclick="removeContact('${c.phone}')" class="text-red-500 hover:text-red-700 text-xs font-medium bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition-colors button-spring">Sil</button>
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.contact-checkbox').forEach(cb => {
+        cb.onchange = (e) => {
+          const id = parseInt(e.target.value);
+          if (e.target.checked) selectedContactIds.add(id);
+          else selectedContactIds.delete(id);
+          updateSelectedCount();
+        };
+      });
+      updateSelectedCount();
+    }
+
+    document.getElementById('searchInput').oninput = renderContacts;
+
+    document.getElementById('selectAllCheckbox').onchange = (e) => {
+      const isChecked = e.target.checked;
+      if (isChecked) {
+        contacts.forEach(c => selectedContactIds.add(c.id));
+      } else {
+        selectedContactIds.clear();
+      }
+      renderContacts();
+    };
+
+    document.getElementById('groupSelect').onchange = (e) => {
+      const groupName = e.target.value;
+      const deleteBtn = document.getElementById('deleteGroupBtn');
+      selectedContactIds.clear();
+      if (groupName) {
+        deleteBtn.classList.remove('hidden');
+        const group = groups.find(g => g.name === groupName);
+        if (group) {
+          group.contact_ids.forEach(id => selectedContactIds.add(id));
+        }
+      } else {
+        deleteBtn.classList.add('hidden');
+      }
+      renderContacts();
+    };
+
+    document.getElementById('deleteGroupBtn').onclick = async () => {
+      const groupName = document.getElementById('groupSelect').value;
+      if (!groupName) return;
+      if (confirm(`"${groupName}" grubunu silmek istediğinize emin misiniz? (Kişiler silinmez, sadece grup silinir)`)) {
+        try {
+          await invoke('delete_group', { name: groupName });
+          await loadGroups();
+          document.getElementById('groupSelect').value = '';
+          document.getElementById('deleteGroupBtn').classList.add('hidden');
+          selectedContactIds.clear();
+          renderContacts();
+        } catch (e) {
+          alert("Grup silinemedi: " + e);
+        }
+      }
+    };
+
+    document.getElementById('saveGroupBtn').onclick = () => {
+      if (selectedContactIds.size === 0) return;
+      document.getElementById('groupPromptModal').classList.replace('hidden', 'flex');
+      document.getElementById('groupNameInput').focus();
+    };
+
+    document.getElementById('cancelGroupBtn').onclick = () => {
+      document.getElementById('groupPromptModal').classList.replace('flex', 'hidden');
+    };
+
+    document.getElementById('saveGroupConfirmBtn').onclick = async () => {
+      const name = document.getElementById('groupNameInput').value.trim();
+      if (name) {
+        try {
+          await invoke('save_group', { name, contactIds: Array.from(selectedContactIds) });
+          await loadGroups();
+          document.getElementById('groupSelect').value = name;
+          document.getElementById('groupPromptModal').classList.replace('flex', 'hidden');
+          document.getElementById('groupNameInput').value = '';
+        } catch (e) {
+          alert("Grup kaydedilemedi: " + e);
+        }
+      }
+    };
+
+    window.removeContact = async (phone) => {
+      await invoke('remove_contact', { phone });
+      await loadData();
+    };
+
+    // Import
+    document.getElementById('importBtn').onclick = async () => {
+      try {
+        const filePath = await open({
+          multiple: false,
+          filters: [{ name: 'Contacts', extensions: ['vcf', 'csv', 'txt'] }]
+        });
+        if (filePath) {
+          const btn = document.getElementById('importBtn');
+          const oldText = btn.textContent;
+          btn.textContent = 'İçe Aktarılıyor...';
+          const count = await invoke('import_contacts_from_file', { path: filePath });
+          alert(`${count} kişi başarıyla içe aktarıldı!`);
+          btn.textContent = oldText;
+          await loadData();
+        }
+      } catch (err) {
+        alert("Dosya okuma hatası: " + err);
+        document.getElementById('importBtn').textContent = 'İçe Aktar (.vcf / .csv)';
+      }
+    };
+
+    // Manual Add Modal Handlers
+    document.getElementById('addContactBtn').onclick = () => {
+      document.getElementById('contactPromptModal').classList.replace('hidden', 'flex');
+      document.getElementById('contactNameInput').focus();
+    };
+
+    document.getElementById('cancelContactBtn').onclick = () => {
+      document.getElementById('contactPromptModal').classList.replace('flex', 'hidden');
+    };
+
+    document.getElementById('saveContactBtn').onclick = async () => {
+      const name = document.getElementById('contactNameInput').value.trim();
+      const phone = document.getElementById('contactPhoneInput').value.replace(/[-\s\(\)]/g, '').trim();
+      
+      if (phone) {
+        document.getElementById('contactPromptModal').classList.replace('flex', 'hidden');
+        document.getElementById('contactNameInput').value = '';
+        document.getElementById('contactPhoneInput').value = '';
+        
+        await invoke('add_contact', { name: name || 'İsimsiz', phone });
+        await loadData();
+      } else {
+        alert("Lütfen en azından bir telefon numarası girin.");
+      }
+    };
+
+    // Attach Image
+    document.getElementById('attachImageBtn').onclick = async () => {
+      try {
+        const filePath = await open({
+          multiple: false,
+          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }]
+        });
+        if (filePath) {
+          attachedImagePath = filePath;
+          const fileName = filePath.split('/').pop().split('\\').pop();
+          document.getElementById('imageName').textContent = fileName;
+          document.getElementById('imageName').classList.add('text-blue-600', 'font-medium');
+        }
+      } catch (e) { console.error(e); }
+    };
+
+    // Send Message
+    document.getElementById('sendBtn').onclick = async () => {
+      if (selectedContactIds.size === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
+      const msg = document.getElementById('messageBox').value.trim();
+      if (!msg && !attachedImagePath) return alert("Lütfen bir mesaj yazın veya resim ekleyin.");
+
+      const selectedContacts = contacts.filter(c => selectedContactIds.has(c.id));
+      
+      const btn = document.getElementById('sendBtn');
+      btn.disabled = true;
+      const status = document.getElementById('sendStatus');
+      status.classList.remove('hidden');
+
+      try {
+        await invoke('send_whatsapp_messages', { 
+          contacts: selectedContacts, 
+          message: msg,
+          imagePath: attachedImagePath
+        });
+        // Success event is handled via listen('send_status')
+      } catch (err) {
+        alert("Hata: " + err);
+        btn.disabled = false;
+      }
+    };
+
+    // Listeners
+    listen('send_status', (event) => {
+      const status = document.getElementById('sendStatus');
+      status.textContent = event.payload;
+      if (event.payload === "Tamamlandı!") {
+        document.getElementById('sendBtn').disabled = false;
+        alert("Tüm gönderimler tamamlandı!");
+      }
+    });
+
+    document.getElementById('waConnectBtn').onclick = () => {
+      document.getElementById('qrModal').classList.replace('hidden', 'flex');
+      document.getElementById('qrStatus').textContent = 'QR kod bekleniyor... (Birkaç saniye sürebilir)';
+      document.getElementById('qrcode').innerHTML = '';
+      invoke('connect_whatsapp').catch(err => alert("Bağlantı hatası: " + err));
+    };
+
+    document.getElementById('closeQrBtn').onclick = () => {
+      document.getElementById('qrModal').classList.replace('flex', 'hidden');
+    };
+
+    listen('qr_code', (event) => {
+      document.getElementById('qrStatus').textContent = 'QR kodu telefonunuzdan okutun';
+      document.getElementById('qrcode').innerHTML = '';
+      new QRCode(document.getElementById("qrcode"), {
+        text: event.payload,
+        width: 256,
+        height: 256,
+      });
+    });
+
+    listen('whatsapp_ready', (event) => {
+      document.getElementById('qrModal').classList.replace('flex', 'hidden');
+      const btn = document.getElementById('waConnectBtn');
+      btn.textContent = 'Bağlı (Hazır)';
+      btn.classList.replace('bg-green-50', 'bg-gray-100');
+      btn.classList.replace('text-green-700', 'text-gray-500');
+      btn.disabled = true;
+    });
+
+    // Startup
+    loadData();
+  </script>
+</body>
+</html>

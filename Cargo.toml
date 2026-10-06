@@ -1,0 +1,24 @@
+[package]
+name = "whatsapp-sender"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+csv = "1.4.0"
+qrcode = "0.14.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "1.5", features = ["api-all"] }
+tokio = { version = "1.0", features = ["full"] }
+vcard = "0.5.0"
+wa-rs = "0.2.0"
+wa-rs-sqlite-storage = "0.2.0"
+wa-rs-tokio-transport = "0.2.0"
+wa-rs-ureq-http = "0.2.0"
+# whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust.git" }
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
