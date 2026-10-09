@@ -21,6 +21,20 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 - **Kurulum dosyaları:** [Releases](https://github.com/Soul-Art-000/whatsapp-sender-mac/releases) sayfasından macOS (`.dmg` / `.app`) ve Windows (`setup.exe` / `.msi`) kurulum dosyalarını indirin. `master`'a her gönderimde iki platform da derlenir ve sürüm otomatik yayınlanır.
 - **Alternatif:** GitHub Actions sekmesinde ilgili işin **Artifacts** bölümü (`windows-executable`, `macos-app`).
 
+## 🍎 macOS'ta "uygulama hasar görmüş" / "açılamıyor" derse
+
+Uygulama imzasız dağıtıldığı için (ücretli Apple geliştirici sertifikası yok) macOS, internetten inen dosyayı karantinaya alır. **Bir kerelik** şu komut sorunu çözer:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/whatsapp-sender.app
+```
+
+Alternatifler:
+- Uygulamaya Finder'da **sağ tık → Aç → Aç**.
+- İndirirken karantinayı kaldır: `xattr -dr com.apple.quarantine ~/Downloads/whatsapp-sender_*_aarch64.dmg`
+
+Not: macOS paketi **Apple Silicon (arm64)** içindir. Intel Mac kullanıyorsan söyle, evrensel (universal) paket üretecek şekilde ayarlayayım.
+
 ## 🚀 Geliştirme (Mac / Linux / Windows)
 
 Kodu kendi bilgisayarınızda derlemek veya geliştirmek için sisteminizde **Rust** ve **Node.js** (Tauri bağımlılıkları için) kurulu olmalıdır.

@@ -49,6 +49,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ücretsiz dağıtımda sertifika yok; en azından ad-hoc imza atılıyor.
+          # Böylece macOS "hasar görmüş" ("damaged") demez, yalnızca
+          # "geliştirici doğrulanamadı" uyarır ve sağ tık -> Aç çalışır.
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           tagName: app-v__VERSION__
           releaseName: "WhatsApp Sender v__VERSION__"
