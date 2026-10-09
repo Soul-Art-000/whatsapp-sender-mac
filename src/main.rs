@@ -720,6 +720,19 @@ fn remove_contact(phone: String, state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Bütün kişileri siler. Gruplar da silinir: kişi id'lerine bağlı oldukları
+/// için kişiler gidince anlamsız kalırlar. Silinen kişi sayısını döndürür.
+#[command]
+fn clear_contacts(state: State<'_, AppState>) -> Result<usize, String> {
+    let db = state.db.lock().unwrap();
+    let deleted = db
+        .execute("DELETE FROM contacts", [])
+        .map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM groups", [])
+        .map_err(|e| e.to_string())?;
+    Ok(deleted)
+}
+
 #[command]
 fn import_contacts_from_file(path: String, state: State<AppState>) -> Result<ImportResult, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("Dosya okunamadı: {}", e))?;
@@ -782,6 +795,66 @@ fn get_wa_status(state: State<'_, AppState>) -> String {
         Some(c) if c.is_connected() && c.is_logged_in() => "connected".to_string(),
         Some(_) => "connecting".to_string(),
     }
+}
+
+/// Sadece bağlantıyı keser; oturum korunur, bir sonraki açılışta QR gerekmez.
+#[command]
+async fn disconnect_whatsapp(state: State<'_, AppState>) -> Result<(), String> {
+    let client = state
+        .client
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "Zaten bağlı değil.".to_string())?;
+    client.disconnect().await;
+    Ok(())
+}
+
+/// WhatsApp oturumunu bu bilgisayardan siler (çıkış).
+///
+/// wa-rs 0.2.0 sunucu tarafında cihazı kaldıran bir API sunmuyor, bu yüzden
+/// yapılan şey: bağlantıyı kesip yerel oturum dosyalarını silmek. Sonuç olarak
+/// uygulama eşleşmeyi unutur ve bir sonraki bağlantıda QR kod yeniden okutulur.
+/// Telefondaki "Bağlı cihazlar" kaydını kaldırmak için kullanıcı telefonundan
+/// WhatsApp > Bağlı cihazlar üzerinden çıkış yapmalıdır (arayüz bunu söylüyor).
+#[command]
+async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
+    // 1) Bağlantıyı kes
+    let client = {
+        let state = app_handle.state::<AppState>();
+        state.client.lock().unwrap().clone()
+    };
+    if let Some(c) = client {
+        c.disconnect().await;
+    }
+
+    // 2) İstemci tamamen kapansın (dosyalar açıkken silinemez)
+    for _ in 0..60 {
+        let closed = {
+            let state = app_handle.state::<AppState>();
+            !state.connecting.load(Ordering::SeqCst)
+        };
+        if closed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    // 3) Yerel oturumu sil
+    let dir = app_handle
+        .path_resolver()
+        .app_data_dir()
+        .ok_or_else(|| "Uygulama veri klasörü bulunamadı.".to_string())?;
+    for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
+        let path = dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Oturum dosyası silinemedi ({}): {}", name, e))?;
+        }
+    }
+
+    let _ = app_handle.emit_all("whatsapp_logged_out", ());
+    Ok(())
 }
 
 async fn run_bot(app_handle: AppHandle) -> Result<(), String> {
@@ -949,9 +1022,12 @@ fn main() {
             get_contacts,
             add_contact,
             remove_contact,
+            clear_contacts,
             import_contacts_from_file,
             connect_whatsapp,
             get_wa_status,
+            disconnect_whatsapp,
+            logout_whatsapp,
             send_whatsapp_messages,
             stop_sending,
             save_group,

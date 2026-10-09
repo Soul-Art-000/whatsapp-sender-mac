@@ -37,9 +37,17 @@
   <header class="h-16 border-b bg-white flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
     <div class="flex items-center gap-4">
       <h1 class="text-xl font-bold">Ana Kişiler</h1>
-      <button id="waConnectBtn" class="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 button-spring font-medium">
-        WhatsApp Bağla
-      </button>
+      <div class="flex items-center gap-1">
+        <button id="waConnectBtn" class="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 button-spring font-medium">
+          WhatsApp Bağla
+        </button>
+        <button id="waDisconnectBtn" class="hidden text-xs text-gray-500 hover:text-gray-800 px-2 py-1.5 rounded-lg button-spring" title="Bağlantıyı kes (oturum korunur, tekrar QR gerekmez)">
+          Kes
+        </button>
+        <button id="waLogoutBtn" class="hidden text-xs text-red-500 hover:text-red-700 px-2 py-1.5 rounded-lg button-spring" title="Oturumu bu bilgisayardan sil (tekrar QR okutman gerekir)">
+          Çıkış
+        </button>
+      </div>
     </div>
     <div class="flex gap-2">
       <button id="importBtn" class="button-spring bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-200 font-medium">
@@ -47,6 +55,9 @@
       </button>
       <button id="addContactBtn" class="button-spring bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 font-medium">
         + Kişi Ekle
+      </button>
+      <button id="clearContactsBtn" class="button-spring bg-white text-red-600 border border-red-200 px-4 py-2 rounded-lg text-sm hover:bg-red-50 font-medium">
+        Tümünü Sil
       </button>
     </div>
   </header>
@@ -307,6 +318,55 @@
       renderContacts();
     };
 
+    // --- Tüm kişileri sil ---
+    $('clearContactsBtn').onclick = async () => {
+      if (contacts.length === 0) return alert("Liste zaten boş.");
+      if (!confirm(`${contacts.length} kişi ve kayıtlı tüm gruplar silinecek.\n\nBu işlem geri alınamaz. Devam edilsin mi?`)) return;
+      try {
+        const n = await invoke('clear_contacts');
+        selectedContactIds.clear();
+        lastFailed = [];
+        $('retryBtn').classList.add('hidden');
+        await loadData();
+        const s = $('sendStatus');
+        s.classList.remove('hidden');
+        s.textContent = `${n} kişi silindi.`;
+      } catch (e) {
+        alert("Kişiler silinemedi: " + e);
+      }
+    };
+
+    // --- Bağlantıyı kes (oturum korunur) ---
+    $('waDisconnectBtn').onclick = async () => {
+      try {
+        await invoke('disconnect_whatsapp');
+        applyStatus('offline');
+      } catch (e) {
+        alert("Bağlantı kesilemedi: " + e);
+      }
+    };
+
+    // --- Çıkış (yerel oturumu sil) ---
+    $('waLogoutBtn').onclick = async () => {
+      const ok = confirm(
+        "WhatsApp oturumu bu bilgisayardan silinecek.\n" +
+        "Bir sonraki bağlantıda QR kodu tekrar okutman gerekecek.\n\n" +
+        "Telefondaki 'Bağlı cihazlar' listesinden de kaldırmak için:\n" +
+        "WhatsApp > Bağlı cihazlar > bu cihaz > Çıkış yap\n\n" +
+        "Devam edilsin mi?"
+      );
+      if (!ok) return;
+      try {
+        await invoke('logout_whatsapp');
+        applyStatus('offline');
+        const s = $('sendStatus');
+        s.classList.remove('hidden');
+        s.textContent = 'Oturum silindi. Bağlanmak için QR kodu okutun.';
+      } catch (e) {
+        alert("Çıkış yapılamadı: " + e);
+      }
+    };
+
     $('groupSelect').onchange = (e) => {
       const groupName = e.target.value;
       const deleteBtn = $('deleteGroupBtn');
@@ -526,6 +586,10 @@
 
     function applyStatus(st) {
       const btn = $('waConnectBtn');
+      // Bağlıyken/değilken "Kes" ve "Çıkış" yalnızca bir oturum varken görünür
+      const hasSession = st !== 'offline';
+      $('waDisconnectBtn').classList.toggle('hidden', !hasSession);
+      $('waLogoutBtn').classList.toggle('hidden', !hasSession);
       if (st === 'connected') {
         btn.textContent = 'Bağlı (Hazır)';
         btn.disabled = true;
@@ -584,6 +648,13 @@
       applyStatus('offline');
       $('sendStatus').classList.remove('hidden');
       $('sendStatus').textContent = event.payload || 'Bağlantı koptu.';
+    });
+
+    listen('whatsapp_logged_out', () => {
+      applyStatus('offline');
+      const s = $('sendStatus');
+      s.classList.remove('hidden');
+      s.textContent = 'WhatsApp oturumu silindi. Bağlanmak için QR kodu okutun.';
     });
 
     listen('whatsapp_error', (event) => {
