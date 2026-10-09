@@ -1,0 +1,41 @@
+* text=auto eol=lf
+
+# Generated / kilit dosyaları: diff ve dil istatistiğinde sayılmasın
+package-lock.json   linguist-generated=true -diff
+Cargo.lock          linguist-generated=true -diff
+go.sum              linguist-generated=true -diff
+composer.lock       linguist-generated=true -diff
+*.min.js            linguist-generated=true -diff
+*.min.css           linguist-generated=true -diff
+
+# İkili dosyalar (metin dönüşümü uygulanmasın)
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.icns    binary
+*.ttf     binary
+*.otf     binary
+*.woff    binary
+*.woff2   binary
+*.pdf     binary
+*.zip     binary
+*.dmg     binary
+*.apk     binary
+*.ipa     binary
+*.aab     binary
+*.jar     binary
+*.exe     binary
+*.stl     binary
+*.3mf     binary
+*.safetensors binary
+*.gguf    binary
+*.onnx    binary
+*.pt      binary
+*.wasm    binary
+
+# Kabuk betikleri LF kalsın (Windows'ta da çalışsın)
+*.sh   text eol=lf
+gradlew text eol=lf

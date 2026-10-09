@@ -1,0 +1,33 @@
+name: Hata bildirimi
+description: Beklenmeyen bir davranış veya çökme
+labels: [bug]
+body:
+  - type: textarea
+    id: ne-oldu
+    attributes:
+      label: Ne oldu?
+      description: Beklenen ve gerçekleşen davranış
+    validations:
+      required: true
+  - type: textarea
+    id: adimlar
+    attributes:
+      label: Yeniden üretme adımları
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: ortam
+    attributes:
+      label: Ortam
+      placeholder: "macOS 15 / Android 14 / Apple Silicon, sürüm 0.1.0"
+    validations:
+      required: false
+  - type: textarea
+    id: loglar
+    attributes:
+      label: Log / ekran görüntüsü
+    validations:
+      required: false

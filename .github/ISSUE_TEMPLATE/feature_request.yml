@@ -1,0 +1,23 @@
+name: Özellik isteği
+description: Yeni bir yetenek veya iyileştirme
+labels: [enhancement]
+body:
+  - type: textarea
+    id: ihtiyac
+    attributes:
+      label: İhtiyaç
+      description: Hangi sorunu çözer?
+    validations:
+      required: true
+  - type: textarea
+    id: cozum
+    attributes:
+      label: Önerilen çözüm
+    validations:
+      required: false
+  - type: textarea
+    id: alternatif
+    attributes:
+      label: Alternatifler
+    validations:
+      required: false
