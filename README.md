@@ -4,17 +4,19 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 
 ## ✨ Özellikler
 
-- **Rehber İçe Aktarma:** `.vcf` (iCloud VCard) ve `.csv` dosyalarından isim ve telefon numaralarını topluca çekme.
-- **Otomatik Numara Düzeltme:** Eklediğiniz numaralar nasıl yazılırsa yazılsın (boşluklu, +90, 0555 vb.), sistem WhatsApp'ın kabul ettiği `90555...` formatına arka planda otomatik çevirir.
+- **Rehber İçe Aktarma:** `.vcf` (iCloud VCard) ve `.csv` dosyalarından isim ve telefon numaralarını topluca çekme. iCloud'un `item1.TEL;type=pref:` biçimindeki gruplanmış numaraları ve katlanmış uzun satırları da okunur.
+- **Otomatik Numara Düzeltme:** Eklediğiniz numaralar nasıl yazılırsa yazılsın (boşluklu, +90, 0555, 0090... vb.) hem kayıt sırasında hem gönderim sırasında WhatsApp'ın kabul ettiği `90555...` formatına çevrilir. Aynı numara ikinci kez eklenmez.
 - **Gruplama ve Hızlı Seçim:** Ana listedeki kişileri bozmadan "Müşteriler", "VIP" gibi hızlı seçim grupları oluşturma ve tek tıkla seçme.
 - **İsme Özel Hitap:** Mesaj kutusuna `/isim` yazdığınızda, mesaj giderken otomatik olarak kişinin rehberdeki adıyla değiştirilir. *(Örn: Merhaba /isim, nasılsın? -> Merhaba Ahmet, nasılsın?)*
-- **Resimli Mesaj:** Metin mesajlarının yanına bilgisayarınızdan resim (`.png`, `.jpg`) ekleyerek medyalı gönderim yapabilme.
+- **Resimli Mesaj:** Metin mesajlarının yanına bilgisayarınızdan resim (`.png`, `.jpg`, `.webp`) ekleyerek medyalı gönderim yapabilme. Resim bir kez yüklenir, tüm kişilere tekrar tekrar yüklenmez.
 - **Anti-Ban Koruması:** WhatsApp spam filtrelerine takılmamak için her mesaj gönderimi arasında **4 ile 9 saniye arası rastgele** bir bekleme süresi uygulanır.
+- **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** ile işlem güvenle kesilebilir.
+- **Hata Toleransı:** Bir numaraya gönderim başarısız olursa (numarada WhatsApp yok, geçersiz format vb.) kalan kişilere gönderim devam eder; sonuçta kaç kişiye gittiği/kaç kişide hata olduğu bildirilir.
 
-## 📥 İndirme (Windows .exe)
+## 📥 İndirme
 
-Windows bilgisayarlar için derlenmiş hazır `.exe` dosyasına [GitHub Actions](https://github.com/Soul-Art-000/whatsapp-sender-mac/actions) sekmesinden ulaşabilirsiniz. 
-*Son başarılı "Build Windows App" işlemine tıklayıp en alttaki **Artifacts** bölümünden `windows-executable` dosyasını indirebilirsiniz.*
+- **Windows:** Derlenmiş `.exe` için [GitHub Actions](https://github.com/Soul-Art-000/whatsapp-sender-mac/actions) → *Build Windows App* → son başarılı çalışmanın **Artifacts** bölümünden `windows-executable`.
+- **macOS:** *Build macOS App* işinin **Artifacts** bölümünden `macos-app` (`.dmg` / `.app`).
 
 ## 🚀 Geliştirme (Mac / Linux / Windows)
 

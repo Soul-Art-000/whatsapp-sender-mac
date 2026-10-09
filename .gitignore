@@ -1,2 +1,13 @@
 /target
 *.vcf
+node_modules/
+
+# Derleme çıktıları (GitHub Actions artifact olarak dağıtılıyor)
+bundle/
+*.exe
+*.msi
+*.dmg
+*.app
+
+# macOS
+.DS_Store
