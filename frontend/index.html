@@ -112,8 +112,17 @@
           Seçili Kişilere Gönder
         </button>
 
+        <label class="flex items-start gap-2 mt-3 text-xs text-gray-600 select-none cursor-pointer">
+          <input type="checkbox" id="validateCheck" class="mt-0.5 rounded border-gray-300 w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" checked />
+          <span>Göndermeden önce numaraları doğrula<br><span class="text-gray-400">WhatsApp'ta kayıtlı olmayanlar atlanır (önerilir)</span></span>
+        </label>
+
         <button id="stopBtn" class="button-spring w-full mt-2 bg-red-50 text-red-600 border border-red-200 font-medium py-2 rounded-lg hover:bg-red-100 hidden">
           Durdur
+        </button>
+
+        <button id="retryBtn" class="button-spring w-full mt-2 bg-amber-50 text-amber-700 border border-amber-200 font-medium py-2 rounded-lg hover:bg-amber-100 hidden">
+          Başarısızları tekrar dene
         </button>
 
         <div id="progressWrap" class="mt-4 hidden">
@@ -175,6 +184,7 @@
     let selectedContactIds = new Set();
     let attachedImagePath = null;
     let sending = false;
+    let lastFailed = [];
 
     const $ = (id) => document.getElementById(id);
     const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => ({
@@ -415,35 +425,42 @@
     };
 
     // Send Message
-    $('sendBtn').onclick = async () => {
+    async function runSend(list) {
       if (sending) return;
-      if (selectedContactIds.size === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
+      if (!list || list.length === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
       const msg = $('messageBox').value.trim();
       if (!msg && !attachedImagePath) return alert("Lütfen bir mesaj yazın veya resim ekleyin.");
 
-      const selectedContacts = contacts.filter(c => selectedContactIds.has(c.id));
       const btn = $('sendBtn');
       const status = $('sendStatus');
 
       sending = true;
       btn.disabled = true;
+      $('retryBtn').classList.add('hidden');
       $('stopBtn').classList.remove('hidden');
       $('progressWrap').classList.remove('hidden');
       status.classList.remove('hidden');
       status.textContent = 'Başlatılıyor...';
-      setProgress(0, selectedContacts.length);
+      setProgress(0, list.length);
 
       try {
         const res = await invoke('send_whatsapp_messages', {
-          contacts: selectedContacts,
+          contacts: list,
           message: msg,
-          imagePath: attachedImagePath
+          imagePath: attachedImagePath,
+          validate: $('validateCheck').checked
         });
-        setProgress(selectedContacts.length, selectedContacts.length);
-        let msg2 = `${res.sent} kişiye gönderildi.`;
-        if (res.failed > 0) msg2 += ` ${res.failed} kişiye gönderilemedi.`;
-        status.textContent = msg2;
-        alert("İşlem bitti: " + msg2);
+        setProgress(list.length, list.length);
+
+        let text = `${res.sent} kişiye gönderildi.`;
+        if (res.failed > 0) text += ` ${res.failed} kişiye gönderilemedi.`;
+        if (res.skipped > 0) text += ` ${res.skipped} numara WhatsApp'ta kayıtlı olmadığı için atlandı.`;
+        status.textContent = text;
+
+        lastFailed = res.failed_contacts || [];
+        $('retryBtn').classList.toggle('hidden', lastFailed.length === 0);
+        $('retryBtn').textContent = `Başarısızları tekrar dene (${lastFailed.length})`;
+        alert("İşlem bitti: " + text);
       } catch (err) {
         alert("Hata: " + err);
         status.textContent = String(err);
@@ -452,6 +469,14 @@
         btn.disabled = false;
         $('stopBtn').classList.add('hidden');
       }
+    }
+
+    $('sendBtn').onclick = () => {
+      runSend(contacts.filter(c => selectedContactIds.has(c.id)));
+    };
+
+    $('retryBtn').onclick = () => {
+      runSend(lastFailed);
     };
 
     $('stopBtn').onclick = () => {
@@ -469,10 +494,23 @@
       if (m) setProgress(parseInt(m[1], 10) - 1, parseInt(m[2], 10));
     });
 
-    listen('send_done', () => {
-      const total = contacts.length;
-      setProgress(total, total);
-    });
+    function applyStatus(st) {
+      const btn = $('waConnectBtn');
+      if (st === 'connected') {
+        btn.textContent = 'Bağlı (Hazır)';
+        btn.disabled = true;
+        btn.classList.remove('bg-green-50', 'text-green-700', 'border-green-200');
+        btn.classList.add('bg-gray-100', 'text-gray-500', 'border-gray-200');
+      } else if (st === 'connecting') {
+        btn.textContent = 'Bağlanıyor...';
+        btn.disabled = true;
+      } else {
+        btn.textContent = 'WhatsApp Bağla';
+        btn.disabled = false;
+        btn.classList.add('bg-green-50', 'text-green-700', 'border-green-200');
+        btn.classList.remove('bg-gray-100', 'text-gray-500', 'border-gray-200');
+      }
+    }
 
     $('waConnectBtn').onclick = async () => {
       $('qrModal').classList.replace('hidden', 'flex');
@@ -509,33 +547,27 @@
 
     listen('whatsapp_ready', () => {
       $('qrModal').classList.replace('flex', 'hidden');
-      const btn = $('waConnectBtn');
-      btn.textContent = 'Bağlı (Hazır)';
-      btn.classList.remove('bg-green-50', 'text-green-700', 'border-green-200');
-      btn.classList.add('bg-gray-100', 'text-gray-500', 'border-gray-200');
-      btn.disabled = true;
+      applyStatus('connected');
     });
 
     listen('whatsapp_disconnected', (event) => {
-      const btn = $('waConnectBtn');
-      btn.textContent = 'Yeniden Bağla';
-      btn.disabled = false;
-      btn.classList.add('bg-green-50', 'text-green-700', 'border-green-200');
-      btn.classList.remove('bg-gray-100', 'text-gray-500', 'border-gray-200');
+      applyStatus('offline');
       $('sendStatus').classList.remove('hidden');
       $('sendStatus').textContent = event.payload || 'Bağlantı koptu.';
     });
 
     listen('whatsapp_error', (event) => {
-      const btn = $('waConnectBtn');
-      btn.textContent = 'Yeniden Bağla';
-      btn.disabled = false;
+      applyStatus('offline');
       $('qrModal').classList.replace('flex', 'hidden');
       alert("WhatsApp hatası: " + event.payload);
     });
 
     // Startup
-    loadData();
+    loadData().then(async () => {
+      try {
+        applyStatus(await invoke('get_wa_status'));
+      } catch (e) { console.error(e); }
+    });
   </script>
 </body>
 </html>

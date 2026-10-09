@@ -9,9 +9,11 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 - **Gruplama ve Hızlı Seçim:** Ana listedeki kişileri bozmadan "Müşteriler", "VIP" gibi hızlı seçim grupları oluşturma ve tek tıkla seçme.
 - **İsme Özel Hitap:** Mesaj kutusuna `/isim` yazdığınızda, mesaj giderken otomatik olarak kişinin rehberdeki adıyla değiştirilir. *(Örn: Merhaba /isim, nasılsın? -> Merhaba Ahmet, nasılsın?)*
 - **Resimli Mesaj:** Metin mesajlarının yanına bilgisayarınızdan resim (`.png`, `.jpg`, `.webp`) ekleyerek medyalı gönderim yapabilme. Resim bir kez yüklenir, tüm kişilere tekrar tekrar yüklenmez.
-- **Anti-Ban Koruması:** WhatsApp spam filtrelerine takılmamak için her mesaj gönderimi arasında **4 ile 9 saniye arası rastgele** bir bekleme süresi uygulanır.
-- **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** ile işlem güvenle kesilebilir.
-- **Hata Toleransı:** Bir numaraya gönderim başarısız olursa (numarada WhatsApp yok, geçersiz format vb.) kalan kişilere gönderim devam eder; sonuçta kaç kişiye gittiği/kaç kişide hata olduğu bildirilir.
+- **Numara Doğrulama:** Gönderimden önce (isteğe bağlı, varsayılan açık) numaralar WhatsApp'a sorulur; kayıtlı olmayanlar hiç mesaj gönderilmeden atlanır. Bu hem boşa gönderimi hem de ban riskini azaltır.
+- **Bağlantı Yönetimi:** Uygulama açılışta kayıtlı oturumla kendiliğinden bağlanır (QR kod her seferinde okutulmaz). Bağlantı koparsa wa-rs artan beklemeyle kendi kendine yeniden bağlanır; gönderim sırasında kopma olursa sistem mesajı yakmayıp bağlantının geri gelmesini bekler ve kaldığı yerden devam eder.
+- **Anti-Ban Koruması:** Her mesaj arasında **4-9 saniye rastgele** bekleme, her 25 kişide bir uzun mola. Tek bir mesaj için 30 saniye üst sınır vardır; takılan gönderim tüm listeyi kilitlemez.
+- **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** bekleme sırasında bile anında keser.
+- **Hata Toleransı ve Tekrar Deneme:** Geçici hatada 3 kez denenir, kalıcı hatada kalanlara devam edilir. Biten işlemde kaç kişiye gittiği, kaç kişide hata olduğu ve kaç numaranın atlandığı bildirilir; **Başarısızları tekrar dene** ile sadece hatalı olanlar yeniden gönderilir.
 
 ## 📥 İndirme
 
