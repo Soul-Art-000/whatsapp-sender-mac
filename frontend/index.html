@@ -122,7 +122,7 @@
         </button>
 
         <button id="retryBtn" class="button-spring w-full mt-2 bg-amber-50 text-amber-700 border border-amber-200 font-medium py-2 rounded-lg hover:bg-amber-100 hidden">
-          Başarısızları tekrar dene
+          Kalanları gönder
         </button>
 
         <div id="progressWrap" class="mt-4 hidden">
@@ -457,10 +457,10 @@
         if (res.skipped > 0) text += ` ${res.skipped} numara WhatsApp'ta kayıtlı olmadığı için atlandı.`;
         status.textContent = text;
 
-        lastFailed = res.failed_contacts || [];
+        lastFailed = res.pending || [];
         $('retryBtn').classList.toggle('hidden', lastFailed.length === 0);
-        $('retryBtn').textContent = `Başarısızları tekrar dene (${lastFailed.length})`;
-        alert("İşlem bitti: " + text);
+        $('retryBtn').textContent = `Kalanları gönder (${lastFailed.length})`;
+        alert("İşlem bitti: " + text + (lastFailed.length ? `\n${lastFailed.length} kişi kaldı, 'Kalanları gönder' ile devam edebilirsiniz.` : ''));
       } catch (err) {
         alert("Hata: " + err);
         status.textContent = String(err);

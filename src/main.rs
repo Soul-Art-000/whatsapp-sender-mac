@@ -36,7 +36,9 @@ struct SendSummary {
     sent: usize,
     failed: usize,
     skipped: usize,
-    failed_contacts: Vec<Contact>,
+    /// Gönderilemeyenler + hiç denenmemişler (Durdur / bağlantı koptu).
+    /// "Tekrar dene" tam olarak bu listeyi gönderir.
+    pending: Vec<Contact>,
 }
 
 #[derive(Serialize, Clone)]
@@ -306,6 +308,15 @@ async fn find_unregistered<F: Fn(String) + Send>(
     unregistered
 }
 
+/// Henüz gönderilmemiş kişileri "kalanlar" listesine ekler; böylece Durdur'a
+/// basıldığında ya da bağlantı kopup geri gelmediğinde "tekrar dene" tam olarak
+/// kalan kişileri gönderir.
+fn push_pending(summary: &mut SendSummary, rest: &[&Contact]) {
+    for c in rest {
+        summary.pending.push((*c).clone());
+    }
+}
+
 /// Toplu gönderim döngüsü. Tauri'den bağımsız olsun diye `emit` bir closure.
 ///
 /// - Gönderimden önce numaraları doğrular (WhatsApp'ta olmayanları atlar).
@@ -326,7 +337,7 @@ async fn send_batch<F: Fn(String) + Send>(
         sent: 0,
         failed: 0,
         skipped: 0,
-        failed_contacts: Vec::new(),
+        pending: Vec::new(),
     };
 
     // 0) Bağlantı hazır değilse kısa bir süre bekle; gelmezse anlaşılır hata ver.
@@ -389,6 +400,7 @@ async fn send_batch<F: Fn(String) + Send>(
     let mut i = 0usize;
     while i < targets.len() {
         if stop.load(Ordering::SeqCst) {
+            push_pending(&mut summary, &targets[i..]);
             emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
             break;
         }
@@ -406,11 +418,8 @@ async fn send_batch<F: Fn(String) + Send>(
                 .await
                 .is_err()
             {
-                emit("Bağlantı geri gelmedi, gönderim durduruldu. Kalanlar 'Başarısızları tekrar dene' ile gönderilebilir.".to_string());
-                for c in &targets[i..] {
-                    summary.failed += 1;
-                    summary.failed_contacts.push((*c).clone());
-                }
+                emit("Bağlantı geri gelmedi, gönderim durduruldu. Kalanlar 'Kalanları gönder' ile gönderilebilir.".to_string());
+                push_pending(&mut summary, &targets[i..]);
                 break;
             }
             emit("Bağlantı geri geldi, devam ediliyor...".to_string());
@@ -433,7 +442,7 @@ async fn send_batch<F: Fn(String) + Send>(
             Ok(j) => j,
             Err(_) => {
                 summary.failed += 1;
-                summary.failed_contacts.push(contact.clone());
+                summary.pending.push(contact.clone());
                 emit(format!("Atlandı (geçersiz numara): {}", contact.name));
                 i += 1;
                 continue;
@@ -474,12 +483,13 @@ async fn send_batch<F: Fn(String) + Send>(
             summary.sent += 1;
         } else {
             summary.failed += 1;
-            summary.failed_contacts.push(contact.clone());
+            summary.pending.push(contact.clone());
             emit(format!("Gönderilemedi ({}): {}", last_err, contact.name));
         }
         i += 1;
 
         if stop.load(Ordering::SeqCst) {
+            push_pending(&mut summary, &targets[i..]);
             emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
             break;
         }
@@ -489,6 +499,7 @@ async fn send_batch<F: Fn(String) + Send>(
             let secs = random_delay_secs();
             emit(format!("{} sn bekleniyor...", secs));
             if !interruptible_sleep(secs, stop).await {
+                push_pending(&mut summary, &targets[i..]);
                 emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
                 break;
             }
@@ -499,6 +510,7 @@ async fn send_batch<F: Fn(String) + Send>(
             let mola = 15 + random_delay_secs() * 3;
             emit(format!("{} kişilik blok bitti, {} sn mola...", BREAK_EVERY, mola));
             if !interruptible_sleep(mola, stop).await {
+                push_pending(&mut summary, &targets[i..]);
                 emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
                 break;
             }

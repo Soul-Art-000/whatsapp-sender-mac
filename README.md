@@ -13,7 +13,7 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 - **Bağlantı Yönetimi:** Uygulama açılışta kayıtlı oturumla kendiliğinden bağlanır (QR kod her seferinde okutulmaz). Bağlantı koparsa wa-rs artan beklemeyle kendi kendine yeniden bağlanır; gönderim sırasında kopma olursa sistem mesajı yakmayıp bağlantının geri gelmesini bekler ve kaldığı yerden devam eder.
 - **Anti-Ban Koruması:** Her mesaj arasında **4-9 saniye rastgele** bekleme, her 25 kişide bir uzun mola. Tek bir mesaj için 30 saniye üst sınır vardır; takılan gönderim tüm listeyi kilitlemez.
 - **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** bekleme sırasında bile anında keser.
-- **Hata Toleransı ve Tekrar Deneme:** Geçici hatada 3 kez denenir, kalıcı hatada kalanlara devam edilir. Biten işlemde kaç kişiye gittiği, kaç kişide hata olduğu ve kaç numaranın atlandığı bildirilir; **Başarısızları tekrar dene** ile sadece hatalı olanlar yeniden gönderilir.
+- **Hata Toleransı ve Devam Etme:** Geçici hatada 3 kez denenir, kalıcı hatada kalanlara devam edilir. Biten işlemde kaç kişiye gittiği, kaç kişide hata olduğu ve kaç numaranın atlandığı bildirilir. İşlem **Durdur** ile kesilse ya da bağlantı geri gelmese bile kalan kişiler kaydedilir; **Kalanları gönder** ile sadece onlar gönderilir.
 
 ## 📥 İndirme
 
