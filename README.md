@@ -18,8 +18,8 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 
 ## 📥 İndirme
 
-- **Windows:** Derlenmiş `.exe` için [GitHub Actions](https://github.com/Soul-Art-000/whatsapp-sender-mac/actions) → *Build Windows App* → son başarılı çalışmanın **Artifacts** bölümünden `windows-executable`.
-- **macOS:** *Build macOS App* işinin **Artifacts** bölümünden `macos-app` (`.dmg` / `.app`).
+- **Kurulum dosyaları:** [Releases](https://github.com/Soul-Art-000/whatsapp-sender-mac/releases) sayfasından macOS (`.dmg` / `.app`) ve Windows (`setup.exe` / `.msi`) kurulum dosyalarını indirin. `master`'a her gönderimde iki platform da derlenir ve sürüm otomatik yayınlanır.
+- **Alternatif:** GitHub Actions sekmesinde ilgili işin **Artifacts** bölümü (`windows-executable`, `macos-app`).
 
 ## 🚀 Geliştirme (Mac / Linux / Windows)
 

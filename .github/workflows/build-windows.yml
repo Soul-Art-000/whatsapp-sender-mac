@@ -5,12 +5,26 @@ on:
     branches:
       - main
       - master
+    # Sadece kodu etkileyen değişikliklerde derle (README/workflow push'u boşuna tetiklemesin)
+    paths:
+      - 'src/**'
+      - 'frontend/**'
+      - 'icons/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'tauri.conf.json'
+      - '.github/workflows/**'
   workflow_dispatch:
+
+# Sürümü yayınlayabilmek için yazma izni gerekli
+permissions:
+  contents: write
 
 jobs:
   build-tauri:
     runs-on: windows-latest
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +47,25 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^1.5.0" --force
 
-      - name: Build Tauri App
-        run: cargo tauri build
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: "WhatsApp Sender v__VERSION__"
+          releaseBody: |
+            Windows ve macOS için derlenmiş kurulum dosyaları.
+
+            - **setup.exe / .msi** → Windows
+            - **.dmg / .app** → macOS
+
+            Bu sürümdeki düzeltmeler: rehber içe aktarmada kaybolan numaralar,
+            WhatsApp'ta kayıtlı olmayan numaraların atlanması, bağlantı kopunca
+            gönderimin kaldığı yerden devam etmesi, çoklu resim desteği ve
+            kalan kişileri tekrar gönderme.
+          releaseDraft: false
+          prerelease: false
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
