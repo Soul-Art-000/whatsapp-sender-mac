@@ -308,6 +308,63 @@ async fn find_unregistered<F: Fn(String) + Send>(
     unregistered
 }
 
+/// Bir kişiye gönderilecek mesajları kurar. Metin varsa tek metin mesajı;
+/// resim varsa ilki mesaj metniyle birlikte, kalanlar ayrı mesaj olarak.
+fn build_messages(
+    message: &str,
+    contact_name: &str,
+    uploads: &[(wa_rs::upload::UploadResponse, &'static str)],
+) -> Vec<wa_rs::wa_rs_proto::whatsapp::Message> {
+    if uploads.is_empty() {
+        return vec![build_text_message(message, contact_name)];
+    }
+    uploads
+        .iter()
+        .enumerate()
+        .map(|(idx, (up, mime))| {
+            let caption = if idx == 0 { message } else { "" };
+            build_image_message(caption, contact_name, mime, up.clone())
+        })
+        .collect()
+}
+
+/// Bir mesajı gönderir; geçici hatada tekrar dener, bağlantı koptuysa
+/// yeniden bağlanmasını bekler. Hata mesajını döndürür.
+async fn send_one<F: Fn(String) + Send>(
+    client: &Arc<wa_rs::Client>,
+    jid: &wa_rs::Jid,
+    msg: &wa_rs::wa_rs_proto::whatsapp::Message,
+    stop: &AtomicBool,
+    emit: &F,
+) -> Result<(), String> {
+    let mut last_err = String::new();
+    for attempt in 1..=MAX_SEND_ATTEMPTS {
+        let sent = tokio::time::timeout(
+            Duration::from_secs(SEND_TIMEOUT_SECS),
+            client.send_message(jid.clone(), msg.clone()),
+        )
+        .await;
+        match sent {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(e)) => last_err = e.to_string(),
+            Err(_) => last_err = format!("{} sn içinde yanıt gelmedi", SEND_TIMEOUT_SECS),
+        }
+
+        if attempt < MAX_SEND_ATTEMPTS {
+            emit(format!("Hata ({}). Tekrar deneniyor...", last_err));
+            if !interruptible_sleep(3 + attempt as u64 * 2, stop).await {
+                return Err("durduruldu".to_string());
+            }
+            if !(client.is_connected() && client.is_logged_in()) {
+                let _ = client
+                    .wait_for_connected(Duration::from_secs(CONNECT_WAIT_SECS))
+                    .await;
+            }
+        }
+    }
+    Err(last_err)
+}
+
 /// Henüz gönderilmemiş kişileri "kalanlar" listesine ekler; böylece Durdur'a
 /// basıldığında ya da bağlantı kopup geri gelmediğinde "tekrar dene" tam olarak
 /// kalan kişileri gönderir.
@@ -327,7 +384,7 @@ async fn send_batch<F: Fn(String) + Send>(
     client: Arc<wa_rs::Client>,
     contacts: &[Contact],
     message: &str,
-    image_path: Option<&str>,
+    image_paths: &[String],
     validate: bool,
     stop: &AtomicBool,
     emit: F,
@@ -351,20 +408,18 @@ async fn send_batch<F: Fn(String) + Send>(
             })?;
     }
 
-    // 1) Resmi bir kez yükle.
-    let upload = match image_path {
-        Some(p) => {
-            emit("Resim yükleniyor...".to_string());
-            let data = std::fs::read(p).map_err(|e| format!("Resim okunamadı: {}", e))?;
-            let mime = mime_for(p);
-            let up = client
-                .upload(data, wa_rs::download::MediaType::Image)
-                .await
-                .map_err(|e| format!("Resim yüklenemedi: {}", e))?;
-            Some((up, mime))
-        }
-        None => None,
-    };
+    // 1) Resimleri bir kez yükle (kişi başına tekrar yüklenmez).
+    let mut uploads: Vec<(wa_rs::upload::UploadResponse, &'static str)> = Vec::new();
+    for (idx, p) in image_paths.iter().enumerate() {
+        emit(format!("Resim yükleniyor... ({}/{})", idx + 1, image_paths.len()));
+        let data = std::fs::read(p).map_err(|e| format!("Resim okunamadı ({}): {}", p, e))?;
+        let mime = mime_for(p);
+        let up = client
+            .upload(data, wa_rs::download::MediaType::Image)
+            .await
+            .map_err(|e| format!("Resim yüklenemedi ({}): {}", p, e))?;
+        uploads.push((up, mime));
+    }
 
     // 2) Numaraları doğrula.
     let mut targets: Vec<&Contact> = contacts.iter().collect();
@@ -432,10 +487,8 @@ async fn send_batch<F: Fn(String) + Send>(
             contact.name
         ));
 
-        let msg = match &upload {
-            Some((up, mime)) => build_image_message(message, &contact.name, mime, up.clone()),
-            None => build_text_message(message, &contact.name),
-        };
+        // İlk resim mesaj metniyle birlikte, kalan resimler ayrı mesaj olarak gider.
+        let msgs = build_messages(message, &contact.name, &uploads);
 
         let jid_str = format!("{}@s.whatsapp.net", contact.phone);
         let jid = match jid_str.parse::<wa_rs::Jid>() {
@@ -450,45 +503,36 @@ async fn send_batch<F: Fn(String) + Send>(
         };
 
         let mut last_err = String::new();
-        let mut ok = false;
-        for attempt in 1..=MAX_SEND_ATTEMPTS {
-            let sent = tokio::time::timeout(
-                Duration::from_secs(SEND_TIMEOUT_SECS),
-                client.send_message(jid.clone(), msg.clone()),
-            )
-            .await;
-            match sent {
-                Ok(Ok(_)) => {
-                    ok = true;
-                    break;
-                }
-                Ok(Err(e)) => last_err = e.to_string(),
-                Err(_) => last_err = format!("{} sn içinde yanıt gelmedi", SEND_TIMEOUT_SECS),
+        let mut ok = true;
+        for (mi, msg) in msgs.iter().enumerate() {
+            if let Err(e) = send_one(&client, &jid, msg, stop, &emit).await {
+                ok = false;
+                last_err = e;
+                break;
             }
-
-            if attempt < MAX_SEND_ATTEMPTS {
-                emit(format!("Hata ({}). Tekrar deneniyor...", last_err));
-                if !interruptible_sleep(3 + attempt as u64 * 2, stop).await {
-                    break;
-                }
-                if !(client.is_connected() && client.is_logged_in()) {
-                    let _ = client
-                        .wait_for_connected(Duration::from_secs(CONNECT_WAIT_SECS))
-                        .await;
-                }
+            // Aynı kişiye giden sonraki resim için kısa bir nefes.
+            if mi + 1 < msgs.len() && !interruptible_sleep(2 + random_delay_secs() % 3, stop).await {
+                ok = false;
+                last_err = "durduruldu".to_string();
+                break;
             }
         }
 
+        i += 1;
+
+        // Bu kişi gönderildi mi? (Durdurulmuşsa hata saymıyoruz, kalanlara giriyor.)
         if ok {
             summary.sent += 1;
-        } else {
+        } else if !stop.load(Ordering::SeqCst) {
             summary.failed += 1;
             summary.pending.push(contact.clone());
             emit(format!("Gönderilemedi ({}): {}", last_err, contact.name));
         }
-        i += 1;
 
         if stop.load(Ordering::SeqCst) {
+            if !ok {
+                summary.pending.push(contact.clone());
+            }
             push_pending(&mut summary, &targets[i..]);
             emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
             break;
@@ -553,7 +597,11 @@ fn build_image_message(
         wa_rs::wa_rs_proto::whatsapp::message::ImageMessage {
             url: Some(up.url),
             mimetype: Some(mime.to_string()),
-            caption: Some(text.replace("/isim", contact_name)),
+            caption: if text.is_empty() {
+                None
+            } else {
+                Some(text.replace("/isim", contact_name))
+            },
             file_sha256: Some(up.file_sha256),
             file_length: Some(up.file_length),
             media_key: Some(up.media_key),
@@ -782,7 +830,7 @@ async fn run_bot(app_handle: AppHandle) -> Result<(), String> {
 async fn send_whatsapp_messages(
     contacts: Vec<Contact>,
     message: String,
-    image_path: Option<String>,
+    image_paths: Vec<String>,
     validate: bool,
     state: State<'_, AppState>,
     app_handle: AppHandle,
@@ -806,7 +854,7 @@ async fn send_whatsapp_messages(
         client,
         &contacts,
         &message,
-        image_path.as_deref(),
+        &image_paths,
         validate,
         &stop,
         emit,

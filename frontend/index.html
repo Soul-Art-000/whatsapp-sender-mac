@@ -86,7 +86,9 @@
         <h2 class="text-lg font-bold mb-4">Toplu Mesaj Gönder</h2>
 
         <div class="flex items-center justify-between mb-2">
-          <div class="text-sm text-gray-500">Seçili Kişi Sayısı: <span id="selectedCount" class="font-bold text-blue-600">0</span></div>
+          <div class="text-sm text-gray-500">Seçili Kişi Sayısı: <span id="selectedCount" class="font-bold text-blue-600">0</span>
+            <button id="clearSelBtn" class="ml-2 text-xs text-gray-400 hover:text-gray-700 underline hidden">Seçimi temizle</button>
+          </div>
           <button id="saveGroupBtn" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded transition-colors hidden">Grup Olarak Kaydet</button>
         </div>
 
@@ -105,7 +107,7 @@
             <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
             <span id="imageName">Resim Ekle (İsteğe Bağlı)</span>
           </button>
-          <button id="clearImageBtn" class="w-full text-xs text-red-500 hover:text-red-700 mt-1 hidden">Eklentiyi kaldır</button>
+          <ul id="imageList" class="mt-2 space-y-1"></ul>
         </div>
 
         <button id="sendBtn" class="button-spring w-full bg-green-600 text-white font-medium py-3 rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -182,7 +184,7 @@
     let contacts = [];
     let groups = [];
     let selectedContactIds = new Set();
-    let attachedImagePath = null;
+    let attachedImages = [];
     let sending = false;
     let lastFailed = [];
 
@@ -226,8 +228,18 @@
     }
 
     function updateSelectedCount() {
-      $('selectedCount').textContent = selectedContactIds.size;
-      $('saveGroupBtn').classList.toggle('hidden', selectedContactIds.size === 0);
+      const n = selectedContactIds.size;
+      $('selectedCount').textContent = n;
+      $('saveGroupBtn').classList.toggle('hidden', n === 0);
+      $('clearSelBtn').classList.toggle('hidden', n === 0);
+
+      // Başlıktaki "tümünü seç" kutusunu seçimle senkron tut. Aksi hâlde kutu
+      // işaretsiz kalıyor ve seçimi kaldırmak için iki kez basmak gerekiyordu.
+      const vis = visibleContacts();
+      const sel = vis.filter(c => selectedContactIds.has(c.id)).length;
+      const cb = $('selectAllCheckbox');
+      cb.checked = vis.length > 0 && sel === vis.length;
+      cb.indeterminate = sel > 0 && sel < vis.length;
     }
 
     function visibleContacts() {
@@ -287,6 +299,11 @@
       const filtered = visibleContacts();
       if (e.target.checked) filtered.forEach(c => selectedContactIds.add(c.id));
       else filtered.forEach(c => selectedContactIds.delete(c.id));
+      renderContacts();
+    };
+
+    $('clearSelBtn').onclick = () => {
+      selectedContactIds.clear();
       renderContacts();
     };
 
@@ -400,28 +417,41 @@
       }
     };
 
-    // Attach Image
+    // Attach Images — birden fazla seçilebilir; ilki mesaj metniyle birlikte gider
+    const baseName = (p) => p.split('/').pop().split('\\').pop();
+
+    function renderImages() {
+      $('imageList').innerHTML = attachedImages.map((p, idx) => `
+        <li class="flex items-center justify-between gap-2 text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1">
+          <span class="truncate text-gray-600">${esc(baseName(p))}</span>
+          <button data-idx="${idx}" class="remove-image text-red-500 hover:text-red-700 shrink-0 px-1" title="Kaldır">✕</button>
+        </li>`).join('');
+      const n = attachedImages.length;
+      $('imageName').textContent = n
+        ? `${n} resim seçildi`
+        : 'Resim Ekle (İsteğe Bağlı)';
+      $('imageName').classList.toggle('text-blue-600', n > 0);
+      $('imageName').classList.toggle('font-medium', n > 0);
+    }
+
+    $('imageList').addEventListener('click', (e) => {
+      const btn = e.target.closest('.remove-image');
+      if (!btn) return;
+      attachedImages.splice(parseInt(btn.dataset.idx, 10), 1);
+      renderImages();
+    });
+
     $('attachImageBtn').onclick = async () => {
       try {
-        const filePath = await open({
-          multiple: false,
+        const picked = await open({
+          multiple: true,
           filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
         });
-        if (filePath) {
-          attachedImagePath = filePath;
-          const fileName = filePath.split('/').pop().split('\\').pop();
-          $('imageName').textContent = fileName;
-          $('imageName').classList.add('text-blue-600', 'font-medium');
-          $('clearImageBtn').classList.remove('hidden');
-        }
+        if (!picked) return;
+        const arr = Array.isArray(picked) ? picked : [picked];
+        arr.forEach(p => { if (!attachedImages.includes(p)) attachedImages.push(p); });
+        renderImages();
       } catch (e) { console.error(e); }
-    };
-
-    $('clearImageBtn').onclick = () => {
-      attachedImagePath = null;
-      $('imageName').textContent = 'Resim Ekle (İsteğe Bağlı)';
-      $('imageName').classList.remove('text-blue-600', 'font-medium');
-      $('clearImageBtn').classList.add('hidden');
     };
 
     // Send Message
@@ -429,7 +459,7 @@
       if (sending) return;
       if (!list || list.length === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
       const msg = $('messageBox').value.trim();
-      if (!msg && !attachedImagePath) return alert("Lütfen bir mesaj yazın veya resim ekleyin.");
+      if (!msg && attachedImages.length === 0) return alert("Lütfen bir mesaj yazın veya resim ekleyin.");
 
       const btn = $('sendBtn');
       const status = $('sendStatus');
@@ -447,7 +477,7 @@
         const res = await invoke('send_whatsapp_messages', {
           contacts: list,
           message: msg,
-          imagePath: attachedImagePath,
+          imagePaths: [...attachedImages],
           validate: $('validateCheck').checked
         });
         setProgress(list.length, list.length);
