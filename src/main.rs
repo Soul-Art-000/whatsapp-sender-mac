@@ -822,7 +822,10 @@ async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
     // 1) Bağlantıyı kes
     let client = {
         let state = app_handle.state::<AppState>();
-        state.client.lock().unwrap().clone()
+        // Not: değeri ara değişkende tutmak gerekiyor; doğrudan blok sonunda
+        // dönerse geçici MutexGuard `state`ten sonra düşer ve E0597 verir.
+        let c = state.client.lock().unwrap().clone();
+        c
     };
     if let Some(c) = client {
         c.disconnect().await;
