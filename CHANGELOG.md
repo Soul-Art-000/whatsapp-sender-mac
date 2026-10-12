@@ -21,6 +21,20 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 - `tauri` bağımlılığı `desktop` özelliği arkasına alındı; sunucu hedefi Linux'ta
   WebKitGTK olmadan derlenir.
 
+## [0.2.1] - 2026-10-12
+
+### Fixed
+- **Arayüz hiç çalışmıyordu**: sunucu köprüsündeki `return` (blok düzeyinde) sözdizimi
+  hatası veriyor ve tarayıcı tüm betiği reddediyordu. IIFE içine alındı; hem masaüstü
+  hem sunucu arayüzü doğrulandı (tarayıcıda 631 kişilik liste + QR akışı).
+
+### Added
+- `/healthz` sağlık ucu (Docker HEALTHCHECK) ve `/` sayfasının anahtarsız açılması;
+  veri uçları `WA_TOKEN` ister.
+- Kaçırılan QR yeniden gösterilir: sunucu arayüzden önce bağlandıysa son QR saklanır,
+  arayüz bağlanınca ve "WhatsApp Bağla"ya basınca yeniden iletilir.
+- Köprü, 401 alınca erişim anahtarını sorar ve tarayıcıda saklar.
+
 ## [Unreleased]
 
 ### Added

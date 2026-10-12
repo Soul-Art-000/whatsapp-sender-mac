@@ -192,7 +192,10 @@
     // Masaüstünde window.__TAURI__ vardır ve arayüz doğrudan onu kullanır.
     // Uygulama bir sunucuda çalışıp tarayıcıdan açıldığında aynı arayüz kodu
     // çalışsın diye invoke/listen/dialog çağrıları HTTP + WebSocket'e bağlanır.
-    if (!window.__TAURI__) {
+    // IIFE: bu blok içinde `return` kullanılabilsin (blok düzeyinde `return`
+    // sözdizimi hatası verir ve köprünün tamamı çalışmaz).
+    (() => {
+      if (window.__TAURI__) return;
       const params = new URLSearchParams(location.search);
       // Backend adresi: ?api=https://... > localStorage > sayfanın kendi origin'i.
       // Arayüz GitHub Pages'te durup sunucu başka adreste çalıştığında buradan verilir.
@@ -284,7 +287,7 @@
           })
         }
       };
-    }
+    })();
   </script>
 
   <script>
