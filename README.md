@@ -57,3 +57,19 @@ Derleme tamamlandığında işletim sisteminize uygun kurulum dosyası (`.dmg`, 
 
 ## ⚠️ Uyarı
 Bu uygulama tamamen açık kaynaklı ve kişisel kullanım/öğrenim amaçlıdır. Çok kısa sürede binlerce mesaj atmak WhatsApp kullanım koşullarına aykırıdır ve hesabınızın kapatılmasına yol açabilir. Sorumluluk kullanıcıya aittir. Yüksek hacimli gönderimleri 20-30 kişilik bloklara bölerek yapmanız tavsiye edilir.
+
+## Sunucuda çalıştırma (headless / Docker)
+
+Uygulamayı bir sunucuda 7/24 çalıştırıp arayüzü tarayıcıdan (hatta telefondan)
+kullanabilirsiniz — Tauri penceresi gerekmez:
+
+```bash
+docker compose up -d --build
+docker logs -f whatsapp-sender     # arayüz adresi + erişim anahtarı
+```
+
+Arayüz GitHub Pages'ten de açılabilir:
+`https://soul-art-000.github.io/whatsapp-sender-mac/?api=https://<sunucu>`
+
+Kurulum (Docker, systemd, GitHub Pages, CORS, HTTPS), ortam değişkenleri ve API
+uçlarının tamamı: **[SUNUCU.md](SUNUCU.md)**

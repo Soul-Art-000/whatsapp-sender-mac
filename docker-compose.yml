@@ -1,0 +1,21 @@
+services:
+  whatsapp-sender:
+    # Hazır imaj (GitHub Actions her push'ta yayınlar):
+    image: ghcr.io/soul-art-000/whatsapp-sender-mac:latest
+    # İmajı kendiniz derlemek için: docker compose up -d --build
+    build: .
+    container_name: whatsapp-sender
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - wa-data:/data
+    environment:
+      WA_BIND: 0.0.0.0:8080
+      WA_DATA_DIR: /data
+      WA_UPLOAD_DIR: /data/uploads
+      # Boş bırakılırsa ilk açılışta üretilip /data/token içine yazılır:
+      # WA_TOKEN: "kendi-anahtariniz"
+
+volumes:
+  wa-data:

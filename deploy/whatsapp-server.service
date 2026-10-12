@@ -1,0 +1,27 @@
+[Unit]
+Description=WhatsApp Sender (headless sunucu + tarayıcı arayüzü)
+Documentation=https://github.com/Soul-Art-000/whatsapp-sender-mac
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=whatsapp
+Group=whatsapp
+WorkingDirectory=/opt/whatsapp-sender
+Environment=WA_BIND=0.0.0.0:8080
+Environment=WA_DATA_DIR=/var/lib/whatsapp-sender
+Environment=WA_UPLOAD_DIR=/var/lib/whatsapp-sender/uploads
+# Erişim anahtarı burada tutulur: WA_TOKEN=...
+EnvironmentFile=-/etc/whatsapp-sender.env
+ExecStart=/opt/whatsapp-sender/whatsapp-server
+Restart=always
+RestartSec=5
+# Güvenlik sertleştirmesi
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/whatsapp-sender
+
+[Install]
+WantedBy=multi-user.target
