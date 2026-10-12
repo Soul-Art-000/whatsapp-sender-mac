@@ -173,7 +173,11 @@ fn stop_sending(state: State<'_, AppState>) {
 // ------------------------------------------------------------------ gruplar
 
 #[command]
-fn save_group(name: String, contact_ids: Vec<i64>, state: State<'_, AppState>) -> Result<(), String> {
+fn save_group(
+    name: String,
+    contact_ids: Vec<i64>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     shared::save_group(&state.db.lock().unwrap(), &name, &contact_ids)
 }
 

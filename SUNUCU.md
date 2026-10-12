@@ -13,6 +13,59 @@ ikilinin içine gömülüdür: sunucuda ayrıca nginx/CDN kurmak gerekmez.
 
 ---
 
+## VDS'e kurulum — önerilen akış
+
+Backend'i bir VDS'te (Ubuntu/Debian) Docker ile çalıştırıp arayüzü GitHub Pages'ten
+kullanma. Dışarıya yalnızca HTTPS açılır; uygulama portu dış dünyaya kapatılır.
+
+```bash
+# 1) Docker
+curl -fsSL https://get.docker.com | sh
+
+# 2) Uygulamayı başlat (yalnızca localhost'a bağlı, dışarıya kapalı)
+docker run -d --name whatsapp-sender --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 -v wa-data:/data \
+  ghcr.io/soul-art-000/whatsapp-sender-mac:latest
+
+# 3) Erişim anahtarını öğren
+docker exec whatsapp-sender cat /data/token
+
+# 4) HTTPS (Pages arayüzü için şart — tarayıcı https sayfadan http isteğini engeller)
+sudo apt-get install -y caddy
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+wa.ornek.com {
+    reverse_proxy 127.0.0.1:8080 {
+        transport http {
+            read_timeout 3600s
+        }
+    }
+}
+EOF
+sudo systemctl reload caddy
+```
+
+DNS'te `wa.ornek.com` için VDS IP'sine bir A kaydı verin; Caddy sertifikayı
+(Let's Encrypt) kendisi alır ve yeniler.
+
+Sonra arayüz:
+
+```
+https://soul-art-000.github.io/whatsapp-sender-mac/?api=https://wa.ornek.com&token=ANAHTAR
+```
+
+QR görünür → telefondan WhatsApp → Bağlı cihazlar → Cihaz bağla.
+
+**Domain yoksa / Pages istemiyorsanız:** arayüzü doğrudan
+`http://<VDS-IP>:8080/?token=ANAHTAR` ile açın (bu durumda `-p 8080:8080` yapın ve
+güvenlik duvarında portu açın). Bu, HTTPS gerektirmediği için en hızlı yoldur ama
+token'ı ağ üzerinde düz metin taşır; kalıcı kullanımda Caddy'li kurulum tercih edin.
+
+**Not:** VDS'in IP'si sabittir; WhatsApp bunu normal bir cihaz gibi görür. Uzun
+gönderimler sırasında gönderim boyunca HTTP isteği açık kalır — proxy'de
+`read_timeout`/`proxy_read_timeout` değerini yükseltmeyi unutmayın.
+
+---
+
 ## 1) Docker (en kolay)
 
 Yerelde imajı derleyip çalıştırmak:

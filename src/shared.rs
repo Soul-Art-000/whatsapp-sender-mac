@@ -123,7 +123,9 @@ pub fn parse_vcf(content: &str) -> Vec<(String, String)> {
     let mut current_name = String::new();
 
     for line in &lines {
-        let Some(colon) = line.find(':') else { continue };
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
         let head = &line[..colon];
         let value = &line[colon + 1..];
 
@@ -315,13 +317,20 @@ pub async fn find_unregistered<F: Fn(String) + Send>(
                 }
             }
             Err(e) => {
-                emit(format!("Numara doğrulaması yapılamadı ({}), doğrulama atlanıyor.", e));
+                emit(format!(
+                    "Numara doğrulaması yapılamadı ({}), doğrulama atlanıyor.",
+                    e
+                ));
                 return std::collections::HashSet::new();
             }
         }
 
         checked += chunk.len();
-        emit(format!("Numaralar kontrol ediliyor... ({}/{})", checked, contacts.len()));
+        emit(format!(
+            "Numaralar kontrol ediliyor... ({}/{})",
+            checked,
+            contacts.len()
+        ));
         if !interruptible_sleep(1, stop).await {
             break;
         }
@@ -432,7 +441,11 @@ pub async fn send_batch<F: Fn(String) + Send>(
     // 1) Resimleri bir kez yükle (kişi başına tekrar yüklenmez).
     let mut uploads: Vec<(wa_rs::upload::UploadResponse, &'static str)> = Vec::new();
     for (idx, p) in image_paths.iter().enumerate() {
-        emit(format!("Resim yükleniyor... ({}/{})", idx + 1, image_paths.len()));
+        emit(format!(
+            "Resim yükleniyor... ({}/{})",
+            idx + 1,
+            image_paths.len()
+        ));
         let data = std::fs::read(p).map_err(|e| format!("Resim okunamadı ({}): {}", p, e))?;
         let mime = mime_for(p);
         let up = client
@@ -448,7 +461,10 @@ pub async fn send_batch<F: Fn(String) + Send>(
         emit("Numaralar WhatsApp'ta kayıtlı mı diye kontrol ediliyor...".to_string());
         let unregistered = find_unregistered(&client, contacts, stop, &emit).await;
         // Liste neredeyse tamamen "yok" çıktıysa doğrulama şüpheli: yok say.
-        if !unregistered.is_empty() && unregistered.len() * 5 > contacts.len() * 4 && contacts.len() >= 10 {
+        if !unregistered.is_empty()
+            && unregistered.len() * 5 > contacts.len() * 4
+            && contacts.len() >= 10
+        {
             emit(format!(
                 "Uyarı: {} numaranın WhatsApp'ta olmadığı bildirildi, oran şüpheli olduğu için doğrulama yok sayıldı.",
                 unregistered.len()
@@ -466,7 +482,10 @@ pub async fn send_batch<F: Fn(String) + Send>(
         "Gönderim başlıyor: {} kişi{}",
         targets.len(),
         if summary.skipped > 0 {
-            format!(" ({} kişi WhatsApp'ta kayıtlı değil, atlandı)", summary.skipped)
+            format!(
+                " ({} kişi WhatsApp'ta kayıtlı değil, atlandı)",
+                summary.skipped
+            )
         } else {
             String::new()
         }
@@ -532,7 +551,8 @@ pub async fn send_batch<F: Fn(String) + Send>(
                 break;
             }
             // Aynı kişiye giden sonraki resim için kısa bir nefes.
-            if mi + 1 < msgs.len() && !interruptible_sleep(2 + random_delay_secs() % 3, stop).await {
+            if mi + 1 < msgs.len() && !interruptible_sleep(2 + random_delay_secs() % 3, stop).await
+            {
                 ok = false;
                 last_err = "durduruldu".to_string();
                 break;
@@ -571,9 +591,12 @@ pub async fn send_batch<F: Fn(String) + Send>(
         }
 
         // Uzun listelerde her 25 kişide bir mola (ban riskini azaltır).
-        if i % BREAK_EVERY == 0 && i < targets.len() {
+        if i.is_multiple_of(BREAK_EVERY) && i < targets.len() {
             let mola = 15 + random_delay_secs() * 3;
-            emit(format!("{} kişilik blok bitti, {} sn mola...", BREAK_EVERY, mola));
+            emit(format!(
+                "{} kişilik blok bitti, {} sn mola...",
+                BREAK_EVERY, mola
+            ));
             if !interruptible_sleep(mola, stop).await {
                 push_pending(&mut summary, &targets[i..]);
                 emit(format!("Durduruldu. {} kişiye gönderildi.", summary.sent));
@@ -597,14 +620,15 @@ pub fn mime_for(path: &str) -> &'static str {
 }
 
 pub fn build_text_message(text: &str, contact_name: &str) -> wa_rs::wa_rs_proto::whatsapp::Message {
-    let mut msg = wa_rs::wa_rs_proto::whatsapp::Message::default();
-    msg.extended_text_message = Some(Box::new(
-        wa_rs::wa_rs_proto::whatsapp::message::ExtendedTextMessage {
-            text: Some(text.replace("/isim", contact_name)),
-            ..Default::default()
-        },
-    ));
-    msg
+    wa_rs::wa_rs_proto::whatsapp::Message {
+        extended_text_message: Some(Box::new(
+            wa_rs::wa_rs_proto::whatsapp::message::ExtendedTextMessage {
+                text: Some(text.replace("/isim", contact_name)),
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    }
 }
 
 pub fn build_image_message(
@@ -613,25 +637,26 @@ pub fn build_image_message(
     mime: &str,
     up: wa_rs::upload::UploadResponse,
 ) -> wa_rs::wa_rs_proto::whatsapp::Message {
-    let mut msg = wa_rs::wa_rs_proto::whatsapp::Message::default();
-    msg.image_message = Some(Box::new(
-        wa_rs::wa_rs_proto::whatsapp::message::ImageMessage {
-            url: Some(up.url),
-            mimetype: Some(mime.to_string()),
-            caption: if text.is_empty() {
-                None
-            } else {
-                Some(text.replace("/isim", contact_name))
+    wa_rs::wa_rs_proto::whatsapp::Message {
+        image_message: Some(Box::new(
+            wa_rs::wa_rs_proto::whatsapp::message::ImageMessage {
+                url: Some(up.url),
+                mimetype: Some(mime.to_string()),
+                caption: if text.is_empty() {
+                    None
+                } else {
+                    Some(text.replace("/isim", contact_name))
+                },
+                file_sha256: Some(up.file_sha256),
+                file_length: Some(up.file_length),
+                media_key: Some(up.media_key),
+                file_enc_sha256: Some(up.file_enc_sha256),
+                direct_path: Some(up.direct_path),
+                ..Default::default()
             },
-            file_sha256: Some(up.file_sha256),
-            file_length: Some(up.file_length),
-            media_key: Some(up.media_key),
-            file_enc_sha256: Some(up.file_enc_sha256),
-            direct_path: Some(up.direct_path),
-            ..Default::default()
-        },
-    ));
-    msg
+        )),
+        ..Default::default()
+    }
 }
 
 // ------------------------------------------------------------------ olaylar
@@ -651,8 +676,13 @@ pub fn map_event(event: &Event) -> Option<(&'static str, String)> {
             "whatsapp_error",
             "Oturum kapatıldı. Lütfen QR kodu tekrar okutun.".to_string(),
         )),
-        Event::TemporaryBan(b) => Some(("whatsapp_error", format!("GEÇİCİ BAN: {}", ban_reason_tr(&b.code)))),
-        Event::ConnectFailure(f) => Some(("whatsapp_error", format!("Bağlantı hatası: {}", f.message))),
+        Event::TemporaryBan(b) => Some((
+            "whatsapp_error",
+            format!("GEÇİCİ BAN: {}", ban_reason_tr(&b.code)),
+        )),
+        Event::ConnectFailure(f) => {
+            Some(("whatsapp_error", format!("Bağlantı hatası: {}", f.message)))
+        }
         Event::StreamReplaced(_) => Some((
             "whatsapp_error",
             "Oturum başka bir cihazdan açıldı.".to_string(),
@@ -709,7 +739,8 @@ pub fn get_contacts(db: &Connection) -> Result<Vec<Contact>, String> {
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 pub fn add_contact(db: &Connection, name: &str, phone: &str) -> Result<(), String> {
@@ -808,7 +839,8 @@ pub fn get_groups(db: &Connection) -> Result<Vec<Group>, String> {
             Ok(Group { name, contact_ids })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 pub fn delete_group(db: &Connection, name: &str) -> Result<(), String> {
@@ -833,11 +865,7 @@ pub fn wa_status(client: &Option<Arc<wa_rs::Client>>) -> String {
 /// wa-rs kopan bağlantıyı kendi içinde (artan beklemeyle) yeniden kurar;
 /// bizim işimiz istemciyi ayakta tutmak ve olayları `emit` ile bildirmek.
 /// Olay adları/yükleri her iki arayüzde de aynıdır (`map_event`).
-pub async fn run_bot<E, F>(
-    app_dir: &Path,
-    emit: E,
-    on_client: F,
-) -> Result<(), String>
+pub async fn run_bot<E, F>(app_dir: &Path, emit: E, on_client: F) -> Result<(), String>
 where
     E: Fn(&str, serde_json::Value) + Clone + Send + Sync + 'static,
     F: FnOnce(Arc<wa_rs::Client>) + Send + 'static,

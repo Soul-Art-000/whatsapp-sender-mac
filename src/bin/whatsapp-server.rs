@@ -85,7 +85,13 @@ fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("dosya");
     let cleaned: String = base
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if cleaned.is_empty() {
         "dosya".to_string()
@@ -125,8 +131,13 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
             let a: HashMap<String, String> = parse_args(args)?;
             let path = PathBuf::from(a.get("path").cloned().unwrap_or_default());
             // Yalnızca sunucunun kendi yüklediği dosyalar okunur (yol kaçışına kapalı).
-            let upload_dir = srv.upload_dir.canonicalize().unwrap_or_else(|_| (*srv.upload_dir).clone());
-            let real = path.canonicalize().map_err(|e| format!("Dosya bulunamadı: {}", e))?;
+            let upload_dir = srv
+                .upload_dir
+                .canonicalize()
+                .unwrap_or_else(|_| (*srv.upload_dir).clone());
+            let real = path
+                .canonicalize()
+                .map_err(|e| format!("Dosya bulunamadı: {}", e))?;
             if !real.starts_with(&upload_dir) {
                 return Err("Bu yola izin verilmiyor; dosyayı arayüzden yükleyin.".to_string());
             }
@@ -178,7 +189,9 @@ async fn logout(srv: &Server) -> Result<Value, String> {
     }
     shared::wait_client_stopped(&srv.state).await;
     shared::delete_wa_session(&srv.app_dir)?;
-    let _ = srv.events.send(json!({ "event": "whatsapp_logged_out", "payload": null }));
+    let _ = srv
+        .events
+        .send(json!({ "event": "whatsapp_logged_out", "payload": null }));
     Ok(Value::Null)
 }
 
@@ -235,7 +248,9 @@ fn spawn_connect(srv: Server) {
         };
 
         if let Err(e) = shared::run_bot(&srv.app_dir, emit, on_client).await {
-            let _ = srv.events.send(json!({ "event": "whatsapp_error", "payload": e }));
+            let _ = srv
+                .events
+                .send(json!({ "event": "whatsapp_error", "payload": e }));
         }
         srv.state.connecting.store(false, Ordering::SeqCst);
         *srv.state.client.lock().unwrap() = None;
@@ -271,12 +286,14 @@ async fn upload(
     body: Bytes,
 ) -> Response {
     let name = safe_name(q.get("name").map(String::as_str).unwrap_or("dosya"));
-    let path = srv
-        .upload_dir
-        .join(format!("{}-{}", now_nanos(), name));
+    let path = srv.upload_dir.join(format!("{}-{}", now_nanos(), name));
     match tokio::fs::write(&path, &body).await {
         Ok(_) => Json(path.to_string_lossy().to_string()).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Dosya yazılamadı: {}", e)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Dosya yazılamadı: {}", e),
+        )
+            .into_response(),
     }
 }
 
@@ -287,7 +304,11 @@ async fn ws(State(srv): State<Server>, upgrade: WebSocketUpgrade) -> Response {
 async fn ws_loop(mut socket: WebSocket, srv: Server) {
     let mut rx = srv.events.subscribe();
     while let Ok(event) = rx.recv().await {
-        if socket.send(Message::Text(event.to_string().into())).await.is_err() {
+        if socket
+            .send(Message::Text(event.to_string().into()))
+            .await
+            .is_err()
+        {
             break;
         }
     }
@@ -313,24 +334,30 @@ fn cors_headers(headers: &mut axum::http::HeaderMap) {
         "Access-Control-Allow-Headers",
         HeaderValue::from_static("content-type, x-auth-token"),
     );
-    headers.insert("Access-Control-Allow-Methods", HeaderValue::from_static("GET, POST, OPTIONS"));
+    headers.insert(
+        "Access-Control-Allow-Methods",
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
 }
 
 /// `WA_TOKEN` tanımlıysa bütün uçlar (arayüz dahil) token ister:
 /// `http://sunucu:8080/?token=...` ya da `X-Auth-Token` başlığı.
 async fn require_token(State(srv): State<Server>, req: Request, next: Next) -> Response {
     if let Some(expected) = srv.token.as_deref() {
-        let from_query = req.uri().query().unwrap_or("").split('&').any(|kv| {
-            kv.splitn(2, '=').nth(1) == Some(expected.as_str())
-                && kv.splitn(2, '=').next() == Some("token")
-        });
+        let from_query = req.uri().query().unwrap_or("").split('&').any(
+            |kv| matches!(kv.split_once('='), Some(("token", value)) if value == expected.as_str()),
+        );
         let from_header = req
             .headers()
             .get("x-auth-token")
             .and_then(|v| v.to_str().ok())
             == Some(expected.as_str());
         if !(from_query || from_header) {
-            return (StatusCode::UNAUTHORIZED, "Yetkisiz: geçerli token gerekli.\n").into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Yetkisiz: geçerli token gerekli.\n",
+            )
+                .into_response();
         }
     }
     next.run(req).await
@@ -343,9 +370,11 @@ async fn main() {
         .parse()
         .expect("WA_BIND geçersiz (örn. 0.0.0.0:8080)");
 
-    let app_dir = PathBuf::from(std::env::var("WA_DATA_DIR").unwrap_or_else(|_| "data".to_string()));
+    let app_dir =
+        PathBuf::from(std::env::var("WA_DATA_DIR").unwrap_or_else(|_| "data".to_string()));
     let upload_dir = PathBuf::from(
-        std::env::var("WA_UPLOAD_DIR").unwrap_or_else(|_| app_dir.join("uploads").to_string_lossy().to_string()),
+        std::env::var("WA_UPLOAD_DIR")
+            .unwrap_or_else(|_| app_dir.join("uploads").to_string_lossy().to_string()),
     );
     std::fs::create_dir_all(&upload_dir).expect("yükleme klasörü oluşturulamadı");
     let token = std::env::var("WA_TOKEN").ok().filter(|t| !t.is_empty());
@@ -380,7 +409,10 @@ async fn main() {
         .route("/api/upload", post(upload))
         .route("/api/{cmd}", post(api))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
-        .layer(middleware::from_fn_with_state(server.clone(), require_token))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            require_token,
+        ))
         .layer(middleware::from_fn(cors))
         .with_state(server);
 
