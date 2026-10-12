@@ -4,22 +4,12 @@ version = "0.2.0"
 edition = "2021"
 build = "build.rs"
 
+[workspace]
+members = ["server"]
+
 [lib]
 name = "whatsapp_sender"
 path = "src/lib.rs"
-
-# Masaüstü uygulaması (Tauri + WebKitGTK). Varsayılan hedef.
-[[bin]]
-name = "whatsapp-sender"
-path = "src/main.rs"
-required-features = ["desktop"]
-
-# Sunucu (headless): HTTP API + WebSocket, tarayıcı arayüzü.
-# Derleme: cargo build --release --no-default-features --features server
-[[bin]]
-name = "whatsapp-server"
-path = "src/bin/whatsapp-server.rs"
-required-features = ["server"]
 
 [dependencies]
 csv = "1.4.0"
@@ -32,7 +22,6 @@ wa-rs-sqlite-storage = "0.2.0"
 wa-rs-tokio-transport = "0.2.0"
 wa-rs-ureq-http = "0.2.0"
 tauri = { version = "1.5", features = ["api-all"], optional = true }
-axum = { version = "0.8", features = ["ws"], optional = true }
 # whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust.git" }
 
 [build-dependencies]
@@ -40,6 +29,7 @@ tauri-build = { version = "1.5", optional = true }
 
 [features]
 default = ["desktop"]
+# Masaüstü (Tauri) hedefi tauri'yi çeker; `--no-default-features` ile kapatılır
+# (sunucu paketi lib'i bu şekilde tauri'siz kullanır).
 desktop = ["dep:tauri", "dep:tauri-build", "custom-protocol"]
-server = ["dep:axum"]
 custom-protocol = ["tauri/custom-protocol"]

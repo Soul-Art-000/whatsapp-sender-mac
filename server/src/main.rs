@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -43,6 +43,8 @@ struct Server {
     app_dir: Arc<PathBuf>,
     upload_dir: Arc<PathBuf>,
     token: Option<Arc<String>>,
+    /// Son üretilen QR kodu: arayüz sunucu bağlandıktan sonra açılırsa kaçırmasın.
+    last_qr: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -146,7 +148,17 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
             Ok(json!(result))
         }
         "connect_whatsapp" => {
-            spawn_connect(srv.clone());
+            // QR zaten üretildiyse (arayüz sonradan açıldı) onu tekrar göster;
+            // yoksa bağlanmayı başlat.
+            let pending_qr = srv.last_qr.lock().unwrap().clone();
+            match pending_qr {
+                Some(code) => {
+                    let _ = srv
+                        .events
+                        .send(json!({ "event": "qr_code", "payload": code }));
+                }
+                None => spawn_connect(srv.clone()),
+            }
             Ok(Value::Null)
         }
         "get_wa_status" => {
@@ -228,6 +240,26 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
     Ok(json!(summary))
 }
 
+/// Olayları WebSocket istemcilerine dağıtır; QR kodunu ayrıca saklar ki
+/// arayüz açıldığında (sunucu çoktan bağlanmışsa) QR ekranda görünebilsin.
+fn broadcaster(srv: &Server) -> impl Fn(&str, Value) + Clone + Send + Sync + 'static {
+    let tx = srv.events.clone();
+    let last_qr = srv.last_qr.clone();
+    move |name: &str, payload: Value| {
+        match name {
+            "qr_code" => {
+                if let Some(code) = payload.as_str() {
+                    *last_qr.lock().unwrap() = Some(code.to_string());
+                }
+            }
+            // Bağlantı kurulunca/logout olunca eski QR geçersizdir.
+            "whatsapp_ready" | "whatsapp_logged_out" => *last_qr.lock().unwrap() = None,
+            _ => {}
+        }
+        let _ = tx.send(json!({ "event": name, "payload": payload }));
+    }
+}
+
 /// WhatsApp istemcisini arka planda başlatır (masaüstündeki `spawn_connect`).
 fn spawn_connect(srv: Server) {
     if srv.state.client.lock().unwrap().is_some() {
@@ -238,10 +270,7 @@ fn spawn_connect(srv: Server) {
     }
 
     tokio::spawn(async move {
-        let tx = srv.events.clone();
-        let emit = move |name: &str, payload: Value| {
-            let _ = tx.send(json!({ "event": name, "payload": payload }));
-        };
+        let emit = broadcaster(&srv);
         let state = srv.state.clone();
         let on_client = move |client: Arc<wa_rs::Client>| {
             *state.client.lock().unwrap() = Some(client);
@@ -265,6 +294,11 @@ fn spawn_connect(srv: Server) {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+/// Sağlık kontrolü: kimlik doğrulamasından muaf (Docker HEALTHCHECK buraya bakar).
+async fn healthz() -> &'static str {
+    "ok"
 }
 
 async fn api(State(srv): State<Server>, Path(cmd): Path<String>, body: Bytes) -> Response {
@@ -303,6 +337,15 @@ async fn ws(State(srv): State<Server>, upgrade: WebSocketUpgrade) -> Response {
 
 async fn ws_loop(mut socket: WebSocket, srv: Server) {
     let mut rx = srv.events.subscribe();
+    // Sunucu arayüz açılmadan bağlanmış olabilir: son QR'ı hemen gönder.
+    // Not: değeri ara değişkene al — guard `await` boyunca yaşarsa future Send olmaz.
+    let pending_qr = srv.last_qr.lock().unwrap().clone();
+    if let Some(code) = pending_qr {
+        let event = json!({ "event": "qr_code", "payload": code }).to_string();
+        if socket.send(Message::Text(event.into())).await.is_err() {
+            return;
+        }
+    }
     while let Ok(event) = rx.recv().await {
         if socket
             .send(Message::Text(event.to_string().into()))
@@ -344,6 +387,11 @@ fn cors_headers(headers: &mut axum::http::HeaderMap) {
 /// `http://sunucu:8080/?token=...` ya da `X-Auth-Token` başlığı.
 async fn require_token(State(srv): State<Server>, req: Request, next: Next) -> Response {
     if let Some(expected) = srv.token.as_deref() {
+        // Arayüz sayfası ve sağlık ucu açıktır; veri uçları ve olay akışı anahtar ister.
+        let path = req.uri().path();
+        if path == "/" || path == "/healthz" {
+            return next.run(req).await;
+        }
         let from_query = req.uri().query().unwrap_or("").split('&').any(
             |kv| matches!(kv.split_once('='), Some(("token", value)) if value == expected.as_str()),
         );
@@ -389,6 +437,7 @@ async fn main() {
         app_dir: Arc::new(app_dir.clone()),
         upload_dir: Arc::new(upload_dir.clone()),
         token: token.map(Arc::new),
+        last_qr: Arc::new(Mutex::new(None)),
     };
 
     println!("whatsapp-server dinliyor: http://{}", bind);
@@ -405,6 +454,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/healthz", get(healthz))
         .route("/ws", get(ws))
         .route("/api/upload", post(upload))
         .route("/api/{cmd}", post(api))

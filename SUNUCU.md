@@ -5,7 +5,7 @@ Aynı çekirdek üç biçimde çalışır:
 | Biçim | Ne | Komut |
 |---|---|---|
 | Masaüstü | Tauri penceresi (macOS/Windows) | `cargo build --release` |
-| Sunucu ikilisi | HTTP API + WebSocket, systemd ile 7/24 | `cargo build --release --no-default-features --features server` |
+| Sunucu ikilisi | HTTP API + WebSocket, systemd ile 7/24 | `cargo build --release -p whatsapp-server` |
 | Docker | Yukarıdakinin konteyneri, her şey hazır | `docker compose up -d` |
 
 Sunucu hedefi **Tauri/WebKitGTK kullanmaz**, arayüz (`frontend/index.html`)
@@ -130,7 +130,7 @@ sudo apt-get update && sudo apt-get install -y build-essential pkg-config
 # Rust yoksa: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 git clone https://github.com/Soul-Art-000/whatsapp-sender-mac.git
 cd whatsapp-sender-mac
-cargo build --release --no-default-features --features server
+cargo build --release -p whatsapp-server
 sudo bash deploy/install.sh target/release/whatsapp-server
 ```
 

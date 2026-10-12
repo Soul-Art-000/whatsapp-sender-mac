@@ -1,0 +1,21 @@
+[package]
+name = "whatsapp-server"
+version = "0.2.0"
+edition = "2021"
+description = "whatsapp-sender için headless sunucu (HTTP API + WebSocket)"
+license = "MIT"
+
+# Ayrı paket olması bilinçli: Tauri masaüstü paketleyicisi kendi paketindeki ek
+# ikilileri de bundle'a kopyalamaya çalışıyor ve macOS/Windows derlemesi düşüyordu.
+[[bin]]
+name = "whatsapp-server"
+path = "src/main.rs"
+
+[dependencies]
+# default-features kapalı: tauri (WebKitGTK) sunucu hedefinde hiç çekilmesin.
+whatsapp-sender = { path = "..", default-features = false }
+axum = { version = "0.8", features = ["ws"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+wa-rs = "0.2.0"

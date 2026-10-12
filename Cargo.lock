@@ -6550,7 +6550,6 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 name = "whatsapp-sender"
 version = "0.2.0"
 dependencies = [
- "axum",
  "csv",
  "rusqlite",
  "serde",
@@ -6562,6 +6561,18 @@ dependencies = [
  "wa-rs-sqlite-storage",
  "wa-rs-tokio-transport",
  "wa-rs-ureq-http",
+]
+
+[[package]]
+name = "whatsapp-server"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wa-rs",
+ "whatsapp-sender",
 ]
 
 [[package]]

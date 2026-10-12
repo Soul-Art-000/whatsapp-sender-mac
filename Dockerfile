@@ -5,9 +5,10 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
+COPY server ./server
 COPY frontend ./frontend
 # Bağımlılıkları önce derle (katman önbelleği): kaynak değişince hepsi yeniden derlenmesin.
-RUN cargo build --release --no-default-features --features server \
+RUN cargo build --release -p whatsapp-server \
  && strip target/release/whatsapp-server
 
 # ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ VOLUME /data
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1
+  CMD curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1
 
 # Gerekirse erişim anahtarını üretir, sonra sunucuyu çalıştırır.
 ENTRYPOINT ["/entrypoint.sh"]

@@ -53,10 +53,16 @@ jobs:
         run: |
           docker run -d --name wa-smoke -p 18080:8080 ghcr.io/soul-art-000/whatsapp-sender-mac:${{ github.sha }}
           for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:18080/ >/dev/null; then echo "arayüz yanıt verdi"; break; fi
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then echo "sağlık ucu yanıt verdi"; break; fi
             sleep 2
           done
+          curl -fsS http://127.0.0.1:18080/healthz
           curl -fsS http://127.0.0.1:18080/ | grep -qi "WhatsApp" || { docker logs wa-smoke; exit 1; }
           TOKEN=$(docker exec wa-smoke cat /data/token)
-          curl -fsS -X POST "http://127.0.0.1:18080/api/get_contacts?token=$TOKEN" -H 'Content-Type: application/json' -d '{}' || { docker logs wa-smoke; exit 1; }
+          test -n "$TOKEN"
+          # anahtarsız veri ucu reddedilmeli
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/get_contacts -H 'Content-Type: application/json' -d '{}')" = "401"
+          # anahtarlı kişi listesi boş dizi dönmeli
+          curl -fsS -X POST "http://127.0.0.1:18080/api/get_contacts?token=$TOKEN" -H 'Content-Type: application/json' -d '{}' | grep -q '^\[\]$'
+          echo "duman testi geçti"
           docker rm -f wa-smoke

@@ -18,5 +18,5 @@ jobs:
       # Not: varsayılan (masaüstü/Tauri) hedef Linux'ta derlenemez — Tauri v1
       # webkit2gtk-4.0 ister. Masaüstü derlemesi Windows/macOS iş akışlarında
       # yapılır; burada sunucu hedefi denetlenir.
-      - run: cargo clippy --no-default-features --features server --all-targets -- -D warnings
-      - run: cargo test --no-default-features --features server
+      - run: cargo clippy -p whatsapp-server --all-targets -- -D warnings
+      - run: cargo test -p whatsapp-server

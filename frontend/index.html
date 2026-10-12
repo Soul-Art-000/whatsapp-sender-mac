@@ -232,6 +232,12 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(args || {})
             });
+            if (res.status === 401) {
+              // Anahtar eksik/yanlış: bir kez sor, sakla ve sayfayı yenile.
+              const entered = prompt('Erişim anahtarı (token):', token || '');
+              if (entered) { localStorage.setItem('wa_token', entered); location.reload(); }
+              throw 'Yetkisiz: geçerli erişim anahtarı gerekli.';
+            }
             const text = await res.text();
             let data = text;
             try { data = JSON.parse(text); } catch (_) { /* düz metin hata */ }
