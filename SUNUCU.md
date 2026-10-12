@@ -23,9 +23,15 @@ kullanma. Dışarıya yalnızca HTTPS açılır; uygulama portu dış dünyaya k
 curl -fsSL https://get.docker.com | sh
 
 # 2) Uygulamayı başlat (yalnızca localhost'a bağlı, dışarıya kapalı)
+#    (a) Hazır imaj — GHCR paketini bir kez "Public" yaptıysanız:
 docker run -d --name whatsapp-sender --restart unless-stopped \
   -p 127.0.0.1:8080:8080 -v wa-data:/data \
   ghcr.io/soul-art-000/whatsapp-sender-mac:latest
+
+#    (b) Paket private kaldıysa ya da kendiniz derlemek isterseniz
+#        (repo public olduğu için kimlik bilgisi gerekmez; VDS'te ~10 dk derler, 2 GB+ RAM):
+git clone https://github.com/Soul-Art-000/whatsapp-sender-mac.git
+cd whatsapp-sender-mac && docker compose up -d --build
 
 # 3) Erişim anahtarını öğren
 docker exec whatsapp-sender cat /data/token
@@ -54,6 +60,11 @@ https://soul-art-000.github.io/whatsapp-sender-mac/?api=https://wa.ornek.com&tok
 ```
 
 QR görünür → telefondan WhatsApp → Bağlı cihazlar → Cihaz bağla.
+
+**GHCR paketini public yapmak:** GitHub → profil → Packages → `whatsapp-sender-mac`
+→ Package settings → Change visibility → Public. (Token'ınızda `write:packages`
+yetkisi yoksa bu ayar yalnızca arayüzden yapılabilir.) Public yapmak istemiyorsanız
+yukarıdaki (b) yolunu veya `docker login ghcr.io -u Soul-Art-000` kullanın.
 
 **Domain yoksa / Pages istemiyorsanız:** arayüzü doğrudan
 `http://<VDS-IP>:8080/?token=ANAHTAR` ile açın (bu durumda `-p 8080:8080` yapın ve
