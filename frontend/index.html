@@ -188,6 +188,100 @@
   </div>
 
   <script>
+    // ---- Sunucu (tarayıcı) köprüsü -------------------------------------
+    // Masaüstünde window.__TAURI__ vardır ve arayüz doğrudan onu kullanır.
+    // Uygulama bir sunucuda çalışıp tarayıcıdan açıldığında aynı arayüz kodu
+    // çalışsın diye invoke/listen/dialog çağrıları HTTP + WebSocket'e bağlanır.
+    if (!window.__TAURI__) {
+      const params = new URLSearchParams(location.search);
+      // Backend adresi: ?api=https://... > localStorage > sayfanın kendi origin'i.
+      // Arayüz GitHub Pages'te durup sunucu başka adreste çalıştığında buradan verilir.
+      let apiBase = (params.get('api') || localStorage.getItem('wa_api') || '').replace(/\/+$/, '');
+      if (params.get('api')) localStorage.setItem('wa_api', apiBase);
+      const servedFromPages = location.hostname.endsWith('.github.io') || location.protocol === 'file:';
+      if (!apiBase && servedFromPages) {
+        apiBase = (prompt('Sunucu adresi (ör. https://wa.ornek.com):', localStorage.getItem('wa_api') || '') || '').replace(/\/+$/, '');
+        if (apiBase) { localStorage.setItem('wa_api', apiBase); location.reload(); return; }
+      }
+      const token = params.get('token') || localStorage.getItem('wa_token') || '';
+      if (token) localStorage.setItem('wa_token', token);
+      const withToken = (url) => token
+        ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
+        : url;
+
+      const listeners = {};
+      const wsBase = apiBase
+        ? apiBase.replace(/^http/, 'ws')
+        : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+      const connectWs = () => {
+        const ws = new WebSocket(withToken(wsBase + '/ws'));
+        ws.onmessage = (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch { return; }
+          (listeners[msg.event] || []).forEach((cb) => cb(msg));
+        };
+        ws.onclose = () => setTimeout(connectWs, 2000);
+      };
+      connectWs();
+
+      window.__TAURI__ = {
+        tauri: {
+          invoke: async (cmd, args) => {
+            const res = await fetch(withToken(apiBase + '/api/' + cmd), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(args || {})
+            });
+            const text = await res.text();
+            let data = text;
+            try { data = JSON.parse(text); } catch (_) { /* düz metin hata */ }
+            if (!res.ok) throw data;
+            return data;
+          }
+        },
+        event: {
+          listen: (name, cb) => {
+            (listeners[name] = listeners[name] || []).push(cb);
+            return Promise.resolve(() => {});
+          }
+        },
+        dialog: {
+          // Dosya seçici + sunucuya yükleme; masaüstündeki yol yerine yüklenen
+          // dosyanın sunucudaki geçici yolu döner (arayüz kodu farkı görmesin).
+          open: (options) => new Promise((resolve) => {
+            const multiple = !!(options && options.multiple);
+            const filters = (options && options.filters) || [];
+            const exts = (filters[0] && filters[0].extensions) || [];
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = multiple;
+            if (exts.length) input.accept = exts.map((e) => '.' + e).join(',');
+            input.onchange = async () => {
+              const files = Array.from(input.files || []);
+              if (!files.length) return resolve(null);
+              try {
+                const paths = [];
+                for (const file of files) {
+                  const res = await fetch(withToken(apiBase + '/api/upload?name=' + encodeURIComponent(file.name)), {
+                    method: 'POST', body: file
+                  });
+                  if (!res.ok) throw await res.text();
+                  paths.push(await res.json());
+                }
+                resolve(multiple ? paths : paths[0]);
+              } catch (err) {
+                alert('Dosya yüklenemedi: ' + err);
+                resolve(null);
+              }
+            };
+            input.click();
+          })
+        }
+      };
+    }
+  </script>
+
+  <script>
     const { invoke } = window.__TAURI__.tauri;
     const { open } = window.__TAURI__.dialog;
     const { listen } = window.__TAURI__.event;

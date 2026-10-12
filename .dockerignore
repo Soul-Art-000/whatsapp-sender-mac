@@ -1,0 +1,15 @@
+target/
+bundle/
+icons/
+.github/
+deploy/
+*.exe
+*.dmg
+.git/
+.DS_Store
+*.vcf
+SUNUCU.md
+README.md
+AGENTS.md
+CHANGELOG.md
+CONTRIBUTING.md
