@@ -35,6 +35,26 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
   arayüz bağlanınca ve "WhatsApp Bağla"ya basınca yeniden iletilir.
 - Köprü, 401 alınca erişim anahtarını sorar ve tarayıcıda saklar.
 
+## [0.3.0] - 2026-10-13
+
+### Added
+- **Belge gönderme**: resimlerin yanında her tür dosya (`.pdf`, `.doc(x)`, `.xls(x)`,
+  `.ppt(x)`, `.txt`, `.csv`, `.zip`, `.rar`, `.7z`, uzantısız/tanınmayanlar) eklenebilir.
+  Resimler önizlemeli gider, diğerleri WhatsApp belgesi (indirilebilir ek) olarak;
+  alıcı gerçek dosya adını görür. İlk ek yazılan mesajı altyazı olarak taşır.
+- Ek kararı uzantıya göre çekirdekte verilir (`kind_for`), ekler kişi başına değil
+  gönderim başına bir kez yüklenir — belgeler `MediaType::Document` ile şifrelenip yüklenir.
+- `src/shared.rs` içine birim testleri: ek türü/mime eşlemesi, dosya adı ayıklama,
+  belge mesajı kurulumu, karışık ek sırası ve `/isim` altyazısı.
+
+### Changed
+- `send_whatsapp_messages` parametresi `imagePaths` → `attachmentPaths` (sunucu API'si ve
+  arayüz köprüsü dahil). Arayüzdeki ekleme düğmesi "Resim veya Belge Ekle" oldu; seçilen
+  dosyalar listede 🖼/📄 olarak ayrılır.
+- Sunucu modunda yüklenen dosya adında boşluk ve parantez korunur (alıcıya görünen ad).
+- CI artık `whatsapp-sender` kütüphane testlerini de çalıştırır
+  (`cargo test --no-default-features -p whatsapp-sender --lib`).
+
 ## [Unreleased]
 
 ### Added

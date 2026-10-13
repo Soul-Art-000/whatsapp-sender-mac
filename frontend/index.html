@@ -114,11 +114,12 @@
         <textarea id="messageBox" class="w-full border rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 mb-4" placeholder="Mesajınızı yazın... İsimle hitap etmek için /isim yazabilirsiniz. Örn: Merhaba /isim, nasılsın?"></textarea>
 
         <div class="mb-4">
-          <button id="attachImageBtn" class="w-full bg-gray-50 border border-dashed border-gray-300 text-gray-600 py-3 rounded-lg text-sm hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-            <span id="imageName">Resim Ekle (İsteğe Bağlı)</span>
+          <button id="attachFileBtn" class="w-full bg-gray-50 border border-dashed border-gray-300 text-gray-600 py-3 rounded-lg text-sm hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+            <span id="attachLabel">Resim veya Belge Ekle (İsteğe Bağlı)</span>
           </button>
-          <ul id="imageList" class="mt-2 space-y-1"></ul>
+          <ul id="attachmentList" class="mt-2 space-y-1"></ul>
+          <p class="mt-1 text-xs text-gray-400">Resimler önizlemeli gider; diğer dosyalar (pdf, ofis, zip...) belge olarak. İlk ek, yazdığınız mesajı taşır.</p>
         </div>
 
         <button id="sendBtn" class="button-spring w-full bg-green-600 text-white font-medium py-3 rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -298,7 +299,7 @@
     let contacts = [];
     let groups = [];
     let selectedContactIds = new Set();
-    let attachedImages = [];
+    let attachments = [];
     let sending = false;
     let lastFailed = [];
 
@@ -580,40 +581,42 @@
       }
     };
 
-    // Attach Images — birden fazla seçilebilir; ilki mesaj metniyle birlikte gider
+    // Ekler (resim + belge) — birden fazla seçilebilir; ilki mesaj metniyle gider
     const baseName = (p) => p.split('/').pop().split('\\').pop();
+    const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp'];
+    const isImagePath = (p) => IMAGE_EXTS.includes(baseName(p).split('.').pop().toLowerCase());
 
-    function renderImages() {
-      $('imageList').innerHTML = attachedImages.map((p, idx) => `
+    function renderAttachments() {
+      $('attachmentList').innerHTML = attachments.map((p, idx) => `
         <li class="flex items-center justify-between gap-2 text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1">
-          <span class="truncate text-gray-600">${esc(baseName(p))}</span>
-          <button data-idx="${idx}" class="remove-image text-red-500 hover:text-red-700 shrink-0 px-1" title="Kaldır">✕</button>
+          <span class="truncate text-gray-600">${isImagePath(p) ? '🖼' : '📄'} ${esc(baseName(p))}</span>
+          <button data-idx="${idx}" class="remove-attachment text-red-500 hover:text-red-700 shrink-0 px-1" title="Kaldır">✕</button>
         </li>`).join('');
-      const n = attachedImages.length;
-      $('imageName').textContent = n
-        ? `${n} resim seçildi`
-        : 'Resim Ekle (İsteğe Bağlı)';
-      $('imageName').classList.toggle('text-blue-600', n > 0);
-      $('imageName').classList.toggle('font-medium', n > 0);
+      const n = attachments.length;
+      const belge = attachments.filter(p => !isImagePath(p)).length;
+      $('attachLabel').textContent = n
+        ? `${n} dosya seçildi${belge ? ` (${n - belge} resim, ${belge} belge)` : ' (resim)'}`
+        : 'Resim veya Belge Ekle (İsteğe Bağlı)';
+      $('attachLabel').classList.toggle('text-blue-600', n > 0);
+      $('attachLabel').classList.toggle('font-medium', n > 0);
     }
 
-    $('imageList').addEventListener('click', (e) => {
-      const btn = e.target.closest('.remove-image');
+    $('attachmentList').addEventListener('click', (e) => {
+      const btn = e.target.closest('.remove-attachment');
       if (!btn) return;
-      attachedImages.splice(parseInt(btn.dataset.idx, 10), 1);
-      renderImages();
+      attachments.splice(parseInt(btn.dataset.idx, 10), 1);
+      renderAttachments();
     });
 
-    $('attachImageBtn').onclick = async () => {
+    $('attachFileBtn').onclick = async () => {
       try {
-        const picked = await open({
-          multiple: true,
-          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
-        });
+        // Tür filtresi konmaz: resim/belge ayrımını çekirdek uzantıya bakarak
+        // yapar (sunucu modunda dosya sunucuya yüklenip uzantısı korunur).
+        const picked = await open({ multiple: true });
         if (!picked) return;
         const arr = Array.isArray(picked) ? picked : [picked];
-        arr.forEach(p => { if (!attachedImages.includes(p)) attachedImages.push(p); });
-        renderImages();
+        arr.forEach(p => { if (!attachments.includes(p)) attachments.push(p); });
+        renderAttachments();
       } catch (e) { console.error(e); }
     };
 
@@ -622,7 +625,7 @@
       if (sending) return;
       if (!list || list.length === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
       const msg = $('messageBox').value.trim();
-      if (!msg && attachedImages.length === 0) return alert("Lütfen bir mesaj yazın veya resim ekleyin.");
+      if (!msg && attachments.length === 0) return alert("Lütfen bir mesaj yazın veya bir dosya ekleyin.");
 
       const btn = $('sendBtn');
       const status = $('sendStatus');
@@ -640,7 +643,7 @@
         const res = await invoke('send_whatsapp_messages', {
           contacts: list,
           message: msg,
-          imagePaths: [...attachedImages],
+          attachmentPaths: [...attachments],
           validate: $('validateCheck').checked
         });
         setProgress(list.length, list.length);

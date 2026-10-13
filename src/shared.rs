@@ -338,12 +338,66 @@ pub async fn find_unregistered<F: Fn(String) + Send>(
     unregistered
 }
 
+/// Bir ekin türü: resimler önizlemeli görünür, diğer her şey dosya (belge)
+/// olarak gider — WhatsApp'ta indirilebilir bir ek olarak.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MediaKind {
+    Image,
+    Document,
+}
+
+/// Yüklenmiş bir ek: mesaj kurulurken türü ve dosya adı gerekir.
+pub struct Uploaded {
+    pub up: wa_rs::upload::UploadResponse,
+    pub mime: &'static str,
+    /// Alıcıda görünen dosya adı (uzantısıyla). WhatsApp dosyayı bunsuz açmaz.
+    pub file_name: String,
+    pub kind: MediaKind,
+}
+
+/// Ekleri bir kez yükler (kişi başına tekrar yüklenmez).
+pub async fn upload_attachments<F: Fn(String) + Send>(
+    client: &Arc<wa_rs::Client>,
+    paths: &[String],
+    emit: &F,
+) -> Result<Vec<Uploaded>, String> {
+    let mut uploads = Vec::new();
+    for (idx, p) in paths.iter().enumerate() {
+        let kind = kind_for(p);
+        emit(format!(
+            "{} yükleniyor... ({}/{})",
+            match kind {
+                MediaKind::Image => "Resim",
+                MediaKind::Document => "Dosya",
+            },
+            idx + 1,
+            paths.len()
+        ));
+        let data = std::fs::read(p).map_err(|e| format!("Dosya okunamadı ({}): {}", p, e))?;
+        let media = match kind {
+            MediaKind::Image => wa_rs::download::MediaType::Image,
+            MediaKind::Document => wa_rs::download::MediaType::Document,
+        };
+        let up = client
+            .upload(data, media)
+            .await
+            .map_err(|e| format!("Dosya yüklenemedi ({}): {}", p, e))?;
+        uploads.push(Uploaded {
+            up,
+            mime: mime_for(p),
+            file_name: base_name(p),
+            kind,
+        });
+    }
+    Ok(uploads)
+}
+
 /// Bir kişiye gönderilecek mesajları kurar. Metin varsa tek metin mesajı;
-/// resim varsa ilki mesaj metniyle birlikte, kalanlar ayrı mesaj olarak.
+/// ek varsa ilki mesaj metniyle (altyazı) birlikte, kalanlar ayrı mesaj olarak.
 pub fn build_messages(
     message: &str,
     contact_name: &str,
-    uploads: &[(wa_rs::upload::UploadResponse, &'static str)],
+    uploads: &[Uploaded],
 ) -> Vec<wa_rs::wa_rs_proto::whatsapp::Message> {
     if uploads.is_empty() {
         return vec![build_text_message(message, contact_name)];
@@ -351,9 +405,14 @@ pub fn build_messages(
     uploads
         .iter()
         .enumerate()
-        .map(|(idx, (up, mime))| {
+        .map(|(idx, up)| {
             let caption = if idx == 0 { message } else { "" };
-            build_image_message(caption, contact_name, mime, up.clone())
+            match up.kind {
+                MediaKind::Image => {
+                    build_image_message(caption, contact_name, up.mime, up.up.clone())
+                }
+                MediaKind::Document => build_document_message(caption, contact_name, up),
+            }
         })
         .collect()
 }
@@ -409,12 +468,12 @@ pub fn push_pending(summary: &mut SendSummary, rest: &[&Contact]) {
 /// - Gönderimden önce numaraları doğrular (WhatsApp'ta olmayanları atlar).
 /// - Bağlantı koparsa mesajı yakmayıp yeniden bağlanmasını bekler.
 /// - Geçici hatada tekrar dener, kalıcı hatada kalanlara devam eder.
-/// - Resmi bir kez yükler, "Durdur" ile bekleme sırasında da kesilebilir.
+/// - Ekleri (resim/belge) bir kez yükler, "Durdur" ile bekleme sırasında da kesilebilir.
 pub async fn send_batch<F: Fn(String) + Send>(
     client: Arc<wa_rs::Client>,
     contacts: &[Contact],
     message: &str,
-    image_paths: &[String],
+    attachment_paths: &[String],
     validate: bool,
     stop: &AtomicBool,
     emit: F,
@@ -438,22 +497,8 @@ pub async fn send_batch<F: Fn(String) + Send>(
             })?;
     }
 
-    // 1) Resimleri bir kez yükle (kişi başına tekrar yüklenmez).
-    let mut uploads: Vec<(wa_rs::upload::UploadResponse, &'static str)> = Vec::new();
-    for (idx, p) in image_paths.iter().enumerate() {
-        emit(format!(
-            "Resim yükleniyor... ({}/{})",
-            idx + 1,
-            image_paths.len()
-        ));
-        let data = std::fs::read(p).map_err(|e| format!("Resim okunamadı ({}): {}", p, e))?;
-        let mime = mime_for(p);
-        let up = client
-            .upload(data, wa_rs::download::MediaType::Image)
-            .await
-            .map_err(|e| format!("Resim yüklenemedi ({}): {}", p, e))?;
-        uploads.push((up, mime));
-    }
+    // 1) Ekleri bir kez yükle (kişi başına tekrar yüklenmez).
+    let uploads = upload_attachments(&client, attachment_paths, &emit).await?;
 
     // 2) Numaraları doğrula.
     let mut targets: Vec<&Contact> = contacts.iter().collect();
@@ -527,7 +572,7 @@ pub async fn send_batch<F: Fn(String) + Send>(
             contact.name
         ));
 
-        // İlk resim mesaj metniyle birlikte, kalan resimler ayrı mesaj olarak gider.
+        // İlk ek mesaj metniyle birlikte, kalanlar ayrı mesaj olarak gider.
         let msgs = build_messages(message, &contact.name, &uploads);
 
         let jid_str = format!("{}@s.whatsapp.net", contact.phone);
@@ -608,14 +653,55 @@ pub async fn send_batch<F: Fn(String) + Send>(
     Ok(summary)
 }
 
-pub fn mime_for(path: &str) -> &'static str {
-    let lower = path.to_lowercase();
-    if lower.ends_with(".png") {
-        "image/png"
-    } else if lower.ends_with(".webp") {
-        "image/webp"
+/// Ekin yolu olmadan yalnızca dosya adı (WhatsApp alıcıda bunu gösterir).
+pub fn base_name(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .trim()
+        .to_string()
+}
+
+/// WhatsApp'ta önizlemeli (resim mesajı) giden uzantılar. Geri kalan her şey
+/// belge olarak gider — `gif` dahil: WhatsApp gif'i resim mesajı olarak
+/// göstermiyor, dosya olarak göndermek daha dürüst.
+const IMAGE_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+/// Yolun uzantısına göre resim mi belge mi olduğuna karar verir. Karar burada
+/// verilir (arayüzde değil): sunucu modunda seçilen dosya sunucuya yüklenir ve
+/// uzantı korunur, ayrıca iki arayüz aynı davranışı gösterir.
+pub fn kind_for(path: &str) -> MediaKind {
+    let name = base_name(path).to_lowercase();
+    let ext = name.rsplit('.').next().unwrap_or("");
+    if IMAGE_EXTS.contains(&ext) {
+        MediaKind::Image
     } else {
-        "image/jpeg"
+        MediaKind::Document
+    }
+}
+
+pub fn mime_for(path: &str) -> &'static str {
+    let name = base_name(path).to_lowercase();
+    let ext = name.rsplit('.').next().unwrap_or("");
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "zip" => "application/zip",
+        "rar" => "application/vnd.rar",
+        "7z" => "application/x-7z-compressed",
+        // mp3/mp4 ayrı media mesajlarıyla gönderilmeli; burada belge olarak gider.
+        _ => "application/octet-stream",
     }
 }
 
@@ -652,6 +738,38 @@ pub fn build_image_message(
                 media_key: Some(up.media_key),
                 file_enc_sha256: Some(up.file_enc_sha256),
                 direct_path: Some(up.direct_path),
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    }
+}
+
+/// Belge mesajı (pdf, ofis dosyası, zip...). `file_name` olmadan WhatsApp
+/// alıcıda dosyayı açamaz; `title` de aynı adı taşır, yoksa liste görünümü boş
+/// kalır.
+pub fn build_document_message(
+    text: &str,
+    contact_name: &str,
+    ek: &Uploaded,
+) -> wa_rs::wa_rs_proto::whatsapp::Message {
+    wa_rs::wa_rs_proto::whatsapp::Message {
+        document_message: Some(Box::new(
+            wa_rs::wa_rs_proto::whatsapp::message::DocumentMessage {
+                url: Some(ek.up.url.clone()),
+                mimetype: Some(ek.mime.to_string()),
+                title: Some(ek.file_name.clone()),
+                file_name: Some(ek.file_name.clone()),
+                file_sha256: Some(ek.up.file_sha256.clone()),
+                file_length: Some(ek.up.file_length),
+                media_key: Some(ek.up.media_key.clone()),
+                file_enc_sha256: Some(ek.up.file_enc_sha256.clone()),
+                direct_path: Some(ek.up.direct_path.clone()),
+                caption: if text.is_empty() {
+                    None
+                } else {
+                    Some(text.replace("/isim", contact_name))
+                },
                 ..Default::default()
             },
         )),
@@ -941,4 +1059,133 @@ pub fn delete_wa_session(app_dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ek(file_name: &str, mime: &'static str, kind: MediaKind) -> Uploaded {
+        Uploaded {
+            up: wa_rs::upload::UploadResponse {
+                url: "https://mmg.whatsapp.net/v/x".to_string(),
+                direct_path: "/v/x".to_string(),
+                media_key: vec![1, 2, 3],
+                file_sha256: vec![4],
+                file_enc_sha256: vec![5],
+                file_length: 42,
+            },
+            mime,
+            file_name: file_name.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn ek_turu_ve_mime_uzantiya_gore() {
+        assert_eq!(kind_for("/tmp/foto.JPG"), MediaKind::Image);
+        assert_eq!(mime_for("/tmp/foto.JPG"), "image/jpeg");
+        assert_eq!(kind_for(r"C:\Documents\rapor.pdf"), MediaKind::Document);
+        assert_eq!(mime_for("rapor.pdf"), "application/pdf");
+        assert_eq!(
+            mime_for("tablo.xlsx"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        // Uzantısız/tanınmayan dosya belge olarak gider, resim sanılmaz.
+        assert_eq!(kind_for("/tmp/uzantisiz"), MediaKind::Document);
+        assert_eq!(mime_for("/tmp/arsiv.7z"), "application/x-7z-compressed");
+        // gif resim mesajı olarak gösterilmiyor -> belge olarak gider.
+        assert_eq!(kind_for("anim.gif"), MediaKind::Document);
+        assert_eq!(mime_for("anim.gif"), "image/gif");
+    }
+
+    #[test]
+    fn dosya_adi_yoldan_ayiklanir() {
+        assert_eq!(base_name("/tmp/a b/rapor.pdf"), "rapor.pdf");
+        assert_eq!(base_name(r"C:\Users\x\belge.docx"), "belge.docx");
+        assert_eq!(base_name("tek_dosya.pdf"), "tek_dosya.pdf");
+    }
+
+    #[test]
+    fn belge_mesaji_dosya_adini_ve_altyaziyi_tasir() {
+        let m = build_document_message(
+            "Merhaba /isim",
+            "Ahmet",
+            &ek("rapor.pdf", "application/pdf", MediaKind::Document),
+        );
+        assert!(m.image_message.is_none());
+        let d = m.document_message.expect("belge mesajı kurulmalı");
+        assert_eq!(d.file_name.as_deref(), Some("rapor.pdf"));
+        assert_eq!(d.title.as_deref(), Some("rapor.pdf"));
+        assert_eq!(d.mimetype.as_deref(), Some("application/pdf"));
+        assert_eq!(d.caption.as_deref(), Some("Merhaba Ahmet"));
+        assert_eq!(d.file_length, Some(42));
+        assert_eq!(d.direct_path.as_deref(), Some("/v/x"));
+        assert_eq!(d.media_key.as_deref(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(d.file_enc_sha256.as_deref(), Some(&[5u8][..]));
+    }
+
+    #[test]
+    fn altyazisiz_belgede_caption_bos_olmali() {
+        let m = build_document_message(
+            "",
+            "Ahmet",
+            &ek("sessiz.pdf", "application/pdf", MediaKind::Document),
+        );
+        assert_eq!(
+            m.document_message.expect("belge mesajı").caption,
+            None,
+            "caption None olmalı, Some(\"\") değil"
+        );
+    }
+
+    #[test]
+    fn karisik_eklerde_ilk_ek_altyaziyi_alir() {
+        let ekler = vec![
+            ek("foto.jpg", "image/jpeg", MediaKind::Image),
+            ek("rapor.pdf", "application/pdf", MediaKind::Document),
+            ek("arsiv.zip", "application/zip", MediaKind::Document),
+        ];
+        let msgs = build_messages("Merhaba /isim", "Ayşe", &ekler);
+        assert_eq!(msgs.len(), 3);
+        let img = msgs[0].image_message.as_ref().expect("ilk ek resim");
+        assert_eq!(img.caption.as_deref(), Some("Merhaba Ayşe"));
+        let doc = msgs[1].document_message.as_ref().expect("ikinci ek belge");
+        assert_eq!(doc.file_name.as_deref(), Some("rapor.pdf"));
+        assert_eq!(doc.caption, None, "sonraki ekler altyazı taşımamalı");
+        let zip = msgs[2].document_message.as_ref().expect("üçüncü ek belge");
+        assert_eq!(zip.file_name.as_deref(), Some("arsiv.zip"));
+    }
+
+    #[test]
+    fn ilk_ek_belge_ise_metin_ona_altyazi_olur() {
+        let ekler = vec![ek("rapor.pdf", "application/pdf", MediaKind::Document)];
+        let msgs = build_messages("Ektedir /isim", "Ali", &ekler);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(
+            msgs[0]
+                .document_message
+                .as_ref()
+                .unwrap()
+                .caption
+                .as_deref(),
+            Some("Ektedir Ali")
+        );
+    }
+
+    #[test]
+    fn eksiz_mesaj_metin_mesaji_olarak_kalir() {
+        let msgs = build_messages("Selam /isim", "Zeynep", &[]);
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].document_message.is_none());
+        assert_eq!(
+            msgs[0]
+                .extended_text_message
+                .as_ref()
+                .unwrap()
+                .text
+                .as_deref(),
+            Some("Selam Zeynep")
+        );
+    }
 }

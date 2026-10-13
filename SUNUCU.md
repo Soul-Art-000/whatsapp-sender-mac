@@ -178,7 +178,7 @@ POST /api/connect_whatsapp
 POST /api/get_wa_status             -> "offline" | "connecting" | "connected"
 POST /api/disconnect_whatsapp
 POST /api/logout_whatsapp
-POST /api/send_whatsapp_messages    {contacts, message, imagePaths, validate}
+POST /api/send_whatsapp_messages    {contacts, message, attachmentPaths, validate}
 POST /api/stop_sending
 POST /api/save_group | get_groups | delete_group
 GET  /ws                            olay akışı (qr_code, send_status, send_done, ...)

@@ -60,7 +60,7 @@ struct SendArgs {
     contacts: Vec<Contact>,
     message: String,
     #[serde(default)]
-    image_paths: Vec<String>,
+    attachment_paths: Vec<String>,
     #[serde(default)]
     validate: bool,
 }
@@ -83,12 +83,13 @@ fn now_nanos() -> u128 {
 }
 
 /// Yüklenen dosya adını güvenli bir dosya adına indirger (yol kaçışı yok).
+/// Belge gönderiminde bu ad alıcıya görünür, o yüzden boşluk ve parantez korunur.
 fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("dosya");
     let cleaned: String = base
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ' | '(' | ')') {
                 c
             } else {
                 '_'
@@ -227,7 +228,7 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
         client,
         &args.contacts,
         &args.message,
-        &args.image_paths,
+        &args.attachment_paths,
         args.validate,
         &stop,
         emit,
@@ -313,14 +314,24 @@ async fn api(State(srv): State<Server>, Path(cmd): Path<String>, body: Bytes) ->
     }
 }
 
-/// Arayüzün yüklediği dosya (vCard, CSV, resim) — sunucudaki geçici yol döner.
+/// Arayüzün yüklediği dosya (vCard, CSV, resim, belge) — sunucudaki geçici yol döner.
 async fn upload(
     State(srv): State<Server>,
     Query(q): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Response {
+    // Her yükleme kendi klasörüne: dosya adı (belge gönderiminde alıcıya görünür)
+    // sayı ön eki almadan korunur, aynı adlı iki yükleme de birbirini ezmez.
     let name = safe_name(q.get("name").map(String::as_str).unwrap_or("dosya"));
-    let path = srv.upload_dir.join(format!("{}-{}", now_nanos(), name));
+    let dir = srv.upload_dir.join(now_nanos().to_string());
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Klasör oluşturulamadı: {}", e),
+        )
+            .into_response();
+    }
+    let path = dir.join(&name);
     match tokio::fs::write(&path, &body).await {
         Ok(_) => Json(path.to_string_lossy().to_string()).into_response(),
         Err(e) => (

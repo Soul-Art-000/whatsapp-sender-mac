@@ -20,3 +20,5 @@ jobs:
       # yapılır; burada sunucu hedefi denetlenir.
       - run: cargo clippy -p whatsapp-server --all-targets -- -D warnings
       - run: cargo test -p whatsapp-server
+      # Çekirdek (src/shared.rs) tauri'siz derlenir ve birim testleri vardır.
+      - run: cargo test --no-default-features -p whatsapp-sender --lib

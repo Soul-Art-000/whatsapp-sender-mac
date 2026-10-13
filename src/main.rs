@@ -130,7 +130,7 @@ fn spawn_connect(app_handle: AppHandle) {
 async fn send_whatsapp_messages(
     contacts: Vec<Contact>,
     message: String,
-    image_paths: Vec<String>,
+    attachment_paths: Vec<String>,
     validate: bool,
     state: State<'_, AppState>,
     app_handle: AppHandle,
@@ -154,7 +154,7 @@ async fn send_whatsapp_messages(
         client,
         &contacts,
         &message,
-        &image_paths,
+        &attachment_paths,
         validate,
         &stop,
         emit,

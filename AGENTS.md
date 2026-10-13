@@ -56,8 +56,8 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 
 ## Kanıtlanmış tuzaklar
 
-- **Tauri v1 `#[command]` argümanları JS'te camelCase**: `image_paths` ↔
-  `imagePaths`, `contact_ids` ↔ `contactIds`. Yanlış yazarsan argüman `None`/hata
+- **Tauri v1 `#[command]` argümanları JS'te camelCase**: `attachment_paths` ↔
+  `attachmentPaths`, `contact_ids` ↔ `contactIds`. Yanlış yazarsan argüman `None`/hata
   olur ve sessizce bozulur.
 - **`State` + blok sonu `MutexGuard` → E0597.** Şu kalıp derlenmez:
   ```rust
