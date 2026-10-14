@@ -72,21 +72,9 @@ async fn disconnect_whatsapp(state: State<'_, AppState>) -> Result<(), String> {
 /// "Bağlı cihazlar" kaydını kullanıcı telefonundan kaldırır (arayüz söylüyor).
 #[command]
 async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
-    let client = {
-        let state = app_handle.state::<AppState>();
-        // Not: değeri ara değişkende tutmak gerekiyor; doğrudan blok sonunda
-        // dönerse geçici MutexGuard `state`ten sonra düşer ve E0597 verir.
-        let c = state.client.lock().unwrap().clone();
-        c
-    };
-    if let Some(c) = client {
-        c.disconnect().await;
-    }
-    {
-        let state = app_handle.state::<AppState>();
-        shared::wait_client_stopped(&state).await;
-    }
-    shared::delete_wa_session(&data_dir(&app_handle))?;
+    let dir = data_dir(&app_handle);
+    let state = app_handle.state::<AppState>();
+    shared::logout_session(&state, &dir).await?;
     let _ = app_handle.emit_all("whatsapp_logged_out", ());
     Ok(())
 }
@@ -132,6 +120,8 @@ async fn send_whatsapp_messages(
     message: String,
     attachment_paths: Vec<String>,
     validate: bool,
+    /// Zamanlanmış gönderim: başlangıç zamanı (UNIX saniye). `None` = hemen.
+    start_at: Option<u64>,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<SendSummary, String> {
@@ -156,6 +146,7 @@ async fn send_whatsapp_messages(
         &message,
         &attachment_paths,
         validate,
+        start_at,
         &stop,
         emit,
     )

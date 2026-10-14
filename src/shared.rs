@@ -267,6 +267,56 @@ pub async fn interruptible_sleep(secs: u64, stop: &AtomicBool) -> bool {
     }
 }
 
+/// Şu anki UNIX zamanı (saniye).
+pub fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Kalan süreyi insan diline çevirir: "2 sa 5 dk", "13 dk", "45 sn".
+pub fn human_left(secs: u64) -> String {
+    if secs >= 3600 {
+        format!("{} sa {} dk", secs / 3600, (secs % 3600) / 60)
+    } else if secs >= 60 {
+        format!("{} dk", secs / 60)
+    } else {
+        format!("{} sn", secs)
+    }
+}
+
+/// Zamanlanmış gönderimin başlangıç saatini bekler.
+///
+/// Her 500 ms'de "Durdur" bayrağına bakar, bu yüzden iptal anında etkilidir.
+/// `true` = zaman geldi, `false` = durduruldu. Arayüz, uzun beklemelerde her
+/// dakika, son dakikada her 10 saniyede bir kalan süreyi görür.
+pub async fn wait_until<F: Fn(String) + Send>(deadline: u64, stop: &AtomicBool, emit: &F) -> bool {
+    let mut last_shown = u64::MAX;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        let left = deadline.saturating_sub(now_unix());
+        if left == 0 {
+            return true;
+        }
+        let tick = if left > 60 {
+            left.is_multiple_of(60)
+        } else {
+            left.is_multiple_of(10)
+        };
+        if tick && left != last_shown {
+            last_shown = left;
+            emit(format!(
+                "Zamanlama: {} sonra gönderilecek (Durdur ile iptal edilir).",
+                human_left(left)
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 /// "905551234567:12@s.whatsapp.net" -> "905551234567"
 pub fn jid_user(jid: &wa_rs::Jid) -> String {
     jid.to_string()
@@ -469,12 +519,16 @@ pub fn push_pending(summary: &mut SendSummary, rest: &[&Contact]) {
 /// - Bağlantı koparsa mesajı yakmayıp yeniden bağlanmasını bekler.
 /// - Geçici hatada tekrar dener, kalıcı hatada kalanlara devam eder.
 /// - Ekleri (resim/belge) bir kez yükler, "Durdur" ile bekleme sırasında da kesilebilir.
+// Argümanlar tek tek geçiliyor: hepsi gönderim çağrısının doğal parçası ve bir
+// seçenek struct'ı sarmalamak iki çağıran için de dolaylılık katardı.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_batch<F: Fn(String) + Send>(
     client: Arc<wa_rs::Client>,
     contacts: &[Contact],
     message: &str,
     attachment_paths: &[String],
     validate: bool,
+    start_at: Option<u64>,
     stop: &AtomicBool,
     emit: F,
 ) -> Result<SendSummary, String> {
@@ -486,7 +540,19 @@ pub async fn send_batch<F: Fn(String) + Send>(
         pending: Vec::new(),
     };
 
-    // 0) Bağlantı hazır değilse kısa bir süre bekle; gelmezse anlaşılır hata ver.
+    // 0) Zamanlanmış gönderim: başlangıç saatini bekle. "Durdur" bekleme
+    //    sırasında da iptal eder; o durumda hiçbir mesaj gitmez ve tüm liste
+    //    "kalanlar" olarak geri döner.
+    if let Some(at) = start_at {
+        if !wait_until(at, stop, &emit).await {
+            emit("Zamanlanan gönderim iptal edildi.".to_string());
+            let all: Vec<&Contact> = contacts.iter().collect();
+            push_pending(&mut summary, &all);
+            return Ok(summary);
+        }
+    }
+
+    // 0b) Bağlantı hazır değilse kısa bir süre bekle; gelmezse anlaşılır hata ver.
     if !(client.is_connected() && client.is_logged_in()) {
         emit("WhatsApp bağlantısı bekleniyor...".to_string());
         client
@@ -1025,6 +1091,12 @@ where
 }
 
 /// Sadece bağlantıyı keser; oturum korunur, bir sonraki açılışta QR gerekmez.
+///
+/// Tek başına `client.disconnect()` yetmiyordu: istemci kendi kendine yeniden
+/// bağlanıyor (auto-reconnect) ve çağrı, süren bir bağlanma denemesiyle
+/// yarışırsa etkisiz kalıyordu — kullanıcı "Kes"e basıyor, WhatsApp bağlı
+/// kalıyordu. Burada otomatik yeniden bağlanma kapatılır, bağlantı gerçekten
+/// düşene kadar kısa bir döngüyle tekrar denenir ve istemci düşürülür.
 pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
     let client = state
         .client
@@ -1032,8 +1104,32 @@ pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
         .unwrap()
         .clone()
         .ok_or_else(|| "Zaten bağlı değil.".to_string())?;
-    client.disconnect().await;
+
+    // Süren gönderim varsa dursun; yoksa bağlantı kesilse bile mesaj akmaya devam eder.
+    state.stop.store(true, Ordering::SeqCst);
+    client.enable_auto_reconnect.store(false, Ordering::Relaxed);
+
+    for _ in 0..20 {
+        client.disconnect().await;
+        if !client.is_connected() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    // Arayüz ve gönderim yolu artık "bağlı" görmesin.
+    *state.client.lock().unwrap() = None;
     Ok(())
+}
+
+/// Çıkış: bağlantıyı keser ve yerel oturumu siler.
+///
+/// Bağlı değilken de çalışır — oturum dosyası kalırsa uygulama bir sonraki
+/// açılışta yine kendiliğinden bağlanmaya çalışırdı.
+pub async fn logout_session(state: &AppState, app_dir: &Path) -> Result<(), String> {
+    let _ = disconnect_session(state).await;
+    wait_client_stopped(state).await;
+    delete_wa_session(app_dir)
 }
 
 /// İstemci tamamen durana kadar bekler (oturum dosyası açıkken silinemez).
@@ -1171,6 +1267,37 @@ mod tests {
                 .as_deref(),
             Some("Ektedir Ali")
         );
+    }
+
+    #[test]
+    fn kalan_sure_insan_diline_cevrilir() {
+        assert_eq!(human_left(45), "45 sn");
+        assert_eq!(human_left(60), "1 dk");
+        assert_eq!(human_left(13 * 60), "13 dk");
+        assert_eq!(human_left(2 * 3600 + 5 * 60), "2 sa 5 dk");
+    }
+
+    #[tokio::test]
+    async fn gecmis_zamana_zamanlama_beklemeden_baslar() {
+        let stop = AtomicBool::new(false);
+        let count = std::sync::atomic::AtomicUsize::new(0);
+        let ok = wait_until(now_unix().saturating_sub(5), &stop, &|_: String| {
+            count.fetch_add(1, Ordering::SeqCst);
+        })
+        .await;
+        assert!(ok, "geçmiş saatte bekleme bitmeli");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            0,
+            "geçmiş saat için kalan süre mesajı yazılmamalı"
+        );
+    }
+
+    #[tokio::test]
+    async fn zamanlama_durdurulunca_iptal_edilir() {
+        let stop = AtomicBool::new(true);
+        let ok = wait_until(now_unix() + 3600, &stop, &|_: String| {}).await;
+        assert!(!ok, "Durdur basılıyken bekleme iptal edilmeli");
     }
 
     #[test]

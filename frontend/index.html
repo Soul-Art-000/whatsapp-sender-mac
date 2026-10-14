@@ -122,6 +122,13 @@
           <p class="mt-1 text-xs text-gray-400">Resimler önizlemeli gider; diğer dosyalar (pdf, ofis, zip...) belge olarak. İlk ek, yazdığınız mesajı taşır.</p>
         </div>
 
+        <div class="mb-2 flex items-center gap-2">
+          <label for="scheduleAt" class="text-xs text-gray-500 shrink-0">Zamanla</label>
+          <input type="datetime-local" id="scheduleAt" class="flex-1 min-w-0 border rounded p-2 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <button id="clearScheduleBtn" class="text-xs text-gray-400 hover:text-gray-700 underline shrink-0 hidden">Temizle</button>
+        </div>
+        <p class="mb-3 text-xs text-gray-400">Boş bırakırsan hemen gönderilir. Zamanlanan gönderim için uygulama açık kalmalı; "Durdur" ile iptal edilir.</p>
+
         <button id="sendBtn" class="button-spring w-full bg-green-600 text-white font-medium py-3 rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
           Seçili Kişilere Gönder
         </button>
@@ -620,6 +627,22 @@
       } catch (e) { console.error(e); }
     };
 
+    // Zamanlama: seçilen yerel saat UNIX saniyeye çevrilir (boş = hemen gönder).
+    function scheduleEpoch() {
+      const v = $('scheduleAt').value;
+      if (!v) return null;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? null : Math.floor(t / 1000);
+    }
+
+    $('scheduleAt').oninput = () => {
+      $('clearScheduleBtn').classList.toggle('hidden', !$('scheduleAt').value);
+    };
+    $('clearScheduleBtn').onclick = () => {
+      $('scheduleAt').value = '';
+      $('clearScheduleBtn').classList.add('hidden');
+    };
+
     // Send Message
     async function runSend(list) {
       if (sending) return;
@@ -635,8 +658,9 @@
       $('retryBtn').classList.add('hidden');
       $('stopBtn').classList.remove('hidden');
       $('progressWrap').classList.remove('hidden');
+      const startAt = scheduleEpoch();
       status.classList.remove('hidden');
-      status.textContent = 'Başlatılıyor...';
+      status.textContent = startAt ? 'Zamanlanıyor...' : 'Başlatılıyor...';
       setProgress(0, list.length);
 
       try {
@@ -644,7 +668,8 @@
           contacts: list,
           message: msg,
           attachmentPaths: [...attachments],
-          validate: $('validateCheck').checked
+          validate: $('validateCheck').checked,
+          startAt
         });
         setProgress(list.length, list.length);
 

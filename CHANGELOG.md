@@ -3,6 +3,16 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.4.0]
+
+- **Zamanlanmış gönderim:** mesaj panelinden tarih/saat seçilir; gönderim o
+  saatte başlar. Bekleme sırasında kalan süre gösterilir ve "Durdur" ile iptal
+  edilir (hiçbir mesaj gitmez, tüm liste "kalanlar" olur). Uygulama açık kalmalı.
+- **Bağlantı kesme/çıkış düzeltmesi:** "Kes" ve "Çıkış" istemciyi gerçekten
+  durduruyor. Otomatik yeniden bağlanma kapatılıyor, bağlantı düşene kadar
+  tekrar deneniyor ve istemci durumdan düşürülüyor; ayrıca süren gönderim
+  durdurulur. "Çıkış" bağlı değilken de oturum dosyasını temizler.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added

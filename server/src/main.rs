@@ -63,6 +63,9 @@ struct SendArgs {
     attachment_paths: Vec<String>,
     #[serde(default)]
     validate: bool,
+    /// Zamanlanmış gönderim (UNIX saniye); arayüz `startAt` gönderir.
+    #[serde(default)]
+    start_at: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -196,12 +199,7 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
 }
 
 async fn logout(srv: &Server) -> Result<Value, String> {
-    let client = srv.state.client.lock().unwrap().clone();
-    if let Some(c) = client {
-        c.disconnect().await;
-    }
-    shared::wait_client_stopped(&srv.state).await;
-    shared::delete_wa_session(&srv.app_dir)?;
+    shared::logout_session(&srv.state, &srv.app_dir).await?;
     let _ = srv
         .events
         .send(json!({ "event": "whatsapp_logged_out", "payload": null }));
@@ -230,6 +228,7 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
         &args.message,
         &args.attachment_paths,
         args.validate,
+        args.start_at,
         &stop,
         emit,
     )

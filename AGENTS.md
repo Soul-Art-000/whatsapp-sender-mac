@@ -65,6 +65,13 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
   ```
   Değeri ara değişkene al: `let v = ...lock().unwrap().clone(); v`.
   (Bu hata bir CI döngüsüne mal oldu; artık harness'te testi var.)
+- **Bağlantı kesme: `client.disconnect()` tek başına YETMEZ.** wa-rs kendi
+  içinde yeniden bağlanır (`enable_auto_reconnect`); çağrı süren bir bağlanma
+  denemesiyle yarışırsa etkisiz kalır ve kullanıcı "Kes"e basmasına rağmen
+  bağlı kalır. Doğru sıra: `stop=true` → `enable_auto_reconnect=false` →
+  bağlantı düşene kadar `disconnect()` döngüsü → `state.client = None`.
+  "Çıkış" da bunu kullanır (`shared::logout_session`) ve bağlı değilken de
+  oturum dosyasını siler; aksi hâlde bir sonraki açılışta kendiliğinden bağlanır.
 - **wa-rs 0.2.0'da oturum kapatma API'si yok.** Ne `logout()`, ne
   `remove-companion-device` yardımcısı. Uydurma protokol paketi yazma; yapılan
   şey `client.disconnect()` + `wa_bot.db` silmek. Telefondaki "Bağlı cihazlar"
@@ -114,6 +121,15 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 - Anti-ban ayarları (`src/main.rs`): mesajlar arası 4-9 sn rastgele, her 25
   kişide uzun mola, mesaj başına 30 sn üst sınır, 3 deneme, kopmada 90 sn
   yeniden bağlanma beklemesi, gönderim başında 20 sn bekleme.
+
+## Zamanlanmış gönderim
+
+`send_batch` son parametre olarak `start_at: Option<u64>` (UNIX saniye) alır;
+masaüstünde Tauri argümanı `startAt`, sunucuda `SendArgs.start_at`. Bekleme
+`wait_until` ile yapılır: 500 ms'de bir "Durdur" bayrağına bakar, uzun
+beklemelerde dakikada bir kalan süreyi bildirir. İptal edilirse hiçbir mesaj
+gitmez ve tüm liste "kalanlar" olarak döner. Uygulama kapanınca zamanlama
+kaybolur (kuyruk veritabanına yazılmadı).
 
 ## Açık işler
 
