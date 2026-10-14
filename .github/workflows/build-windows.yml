@@ -58,12 +58,10 @@ jobs:
             Windows ve macOS için derlenmiş kurulum dosyaları.
 
             - **setup.exe / .msi** → Windows
-            - **.dmg / .app** → macOS
+            - **.dmg / .app** → macOS (Apple Silicon, ad-hoc imzalı: ilk açılışta
+              sağ tık → Aç)
 
-            Bu sürümdeki düzeltmeler: rehber içe aktarmada kaybolan numaralar,
-            WhatsApp'ta kayıtlı olmayan numaraların atlanması, bağlantı kopunca
-            gönderimin kaldığı yerden devam etmesi, çoklu resim desteği ve
-            kalan kişileri tekrar gönderme.
+            Sürüm notları için `CHANGELOG.md` dosyasına bakın.
           releaseDraft: false
           prerelease: false
 

@@ -18,6 +18,20 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 - **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** bekleme sırasında bile anında keser.
 - **Hata Toleransı ve Devam Etme:** Geçici hatada 3 kez denenir, kalıcı hatada kalanlara devam edilir. Biten işlemde kaç kişiye gittiği, kaç kişide hata olduğu ve kaç numaranın atlandığı bildirilir. İşlem **Durdur** ile kesilse ya da bağlantı geri gelmese bile kalan kişiler kaydedilir; **Kalanları gönder** ile sadece onlar gönderilir.
 
+## 🔐 Güvenlik
+
+- Uygulama **yerel** çalışır: kişiler ve WhatsApp oturumu yalnızca bu bilgisayarda
+  (`~/Library/Application Support/com.whatsapp.sender/`) tutulur; mesajlar doğrudan
+  WhatsApp Web protokolüyle gider, araya giren bir sunucu yoktur.
+- Masaüstü arayüzünün yetkileri dar tutulur (`tauri.conf.json` → `allowlist`):
+  yalnızca dosya seçme izni vardır, **kabuk komutu çalıştırma izni yoktur**.
+- **Sunucu modu** kullanırsanız erişim anahtarı ilk açılışta üretilir (`/data/token`)
+  ve arayüz anahtarı HTTP'de `X-Auth-Token` başlığıyla gönderir. Sunucuyu internete
+  açık bırakıyorsanız `WA_TOKEN` ayarlı olsun ve önüne HTTPS sonlandıran bir vekil
+  (Caddy/nginx) koyun.
+- macOS kurulumu ücretsiz dağıtım için **ad-hoc imzalıdır**; ilk açılışta
+  sağ tık → Aç gerekir (bkz. aşağıdaki bölüm).
+
 ## 📥 İndirme
 
 - **Kurulum dosyaları:** [Releases](https://github.com/Soul-Art-000/whatsapp-sender-mac/releases) sayfasından macOS (`.dmg` / `.app`) ve Windows (`setup.exe` / `.msi`) kurulum dosyalarını indirin. `master`'a her gönderimde iki platform da derlenir ve sürüm otomatik yayınlanır.

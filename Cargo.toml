@@ -1,6 +1,6 @@
 [package]
 name = "whatsapp-sender"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 build = "build.rs"
 
@@ -22,7 +22,6 @@ wa-rs-sqlite-storage = "0.2.0"
 wa-rs-tokio-transport = "0.2.0"
 wa-rs-ureq-http = "0.2.0"
 tauri = { version = "1.5", features = ["api-all", "system-tray"], optional = true }
-# whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust.git" }
 
 [build-dependencies]
 tauri-build = { version = "1.5", optional = true }

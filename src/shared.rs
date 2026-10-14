@@ -7,7 +7,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -248,12 +248,56 @@ pub const MAX_SEND_ATTEMPTS: u32 = 3;
 pub const BREAK_EVERY: usize = 25;
 
 /// 4-9 saniye arası rastgele anti-ban beklemesi.
+///
+/// Eski sürüm `subsec_nanos() % 6` kullanıyordu; macOS'ta nanos 1000'in katı
+/// geldiği için sonuç yalnızca {0, 2, 4} — yani 4, 6 veya 8 saniye — olabiliyordu.
+/// 5, 7 ve 9 hiç üretilmiyor, "rastgele" desen 3 değere sıkışıyordu. Aşağıdaki
+/// küçük xorshift64* jeneratörü bunu düzeltir (ek bağımlılık yok).
 pub fn random_delay_secs() -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    4 + (nanos % 6)
+    4 + (next_rand() % 6)
+}
+
+/// Süreç içi rastgelelik durumu (tohum ilk çağrıda zamandan + pid'den gelir).
+static RNG_STATE: AtomicU64 = AtomicU64::new(0);
+
+/// xorshift64* — anti-ban beklemesi için fazlasıyla yeterli, dağılımı düzgün.
+fn next_rand() -> u64 {
+    let mut s = RNG_STATE.load(Ordering::Relaxed);
+    if s == 0 {
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            ^ ((std::process::id() as u64) << 32)
+            ^ (&RNG_STATE as *const AtomicU64 as u64);
+        s = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
+    }
+    let mut x = s;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    RNG_STATE.store(x, Ordering::Relaxed);
+    x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+}
+
+/// Sabit zamanlı token karşılaştırması.
+///
+/// `==` ilk farklı baytta döndüğü için zamanlama sızıntısı verir; ağ üzerinden
+/// ölçmek zor olsa da doğrusu bedava. Sunucu erişim anahtarını bununla doğrular.
+pub fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// "Durdur" basıldığında hemen uyanan bekleme. `false` = durduruldu.
@@ -1744,5 +1788,28 @@ mod tests {
         assert_eq!(kalan.len(), 1);
         assert_eq!(kalan[0].id, id3);
         let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn anti_ban_beklemesi_tum_degerleri_uretir() {
+        let mut gorulen = std::collections::BTreeSet::new();
+        for _ in 0..2000 {
+            let d = random_delay_secs();
+            assert!((4..=9).contains(&d), "4-9 arası olmalı, {} geldi", d);
+            gorulen.insert(d);
+        }
+        assert_eq!(
+            gorulen.len(),
+            6,
+            "4..9 arası tüm değerler üretilmeli, görülen: {:?}",
+            gorulen
+        );
+    }
+
+    #[test]
+    fn token_karsilastirmasi_sabit_zamanli_calisir() {
+        assert!(token_eq("abcd1234", "abcd1234"));
+        assert!(!token_eq("abcd1234", "abcd1235"));
+        assert!(!token_eq("abcd", "abcd1234"), "farklı uzunluk eşleşmemeli");
+        assert!(token_eq("", ""));
     }
 }

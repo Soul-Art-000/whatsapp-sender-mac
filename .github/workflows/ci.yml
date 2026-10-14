@@ -22,3 +22,11 @@ jobs:
       - run: cargo test -p whatsapp-server
       # Çekirdek (src/shared.rs) tauri'siz derlenir ve birim testleri vardır.
       - run: cargo test --no-default-features -p whatsapp-sender --lib
+      # Bilgilendirici: bilinen güvenlik kayıtlarını raporlar, derlemeyi kırmaz.
+      # (tauri v1 zincirinde kapatılamayan "unmaintained" kayıtları var; kırmızı
+      # yapmak sinyali değersizleştirirdi.)
+      - name: Güvenlik kayıtları (bilgilendirici)
+        continue-on-error: true
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -457,14 +457,21 @@ async fn require_token(State(srv): State<Server>, req: Request, next: Next) -> R
         if path == "/" || path == "/healthz" {
             return next.run(req).await;
         }
-        let from_query = req.uri().query().unwrap_or("").split('&').any(
-            |kv| matches!(kv.split_once('='), Some(("token", value)) if value == expected.as_str()),
-        );
+        // Karşılaştırma sabit zamanlı: `==` ilk farklı baytta döner (zamanlama sızıntısı).
+        // WebSocket başlık taşıyamadığı için sorgu parametresi de kabul edilir;
+        // arayüz HTTP çağrılarını başlıkla yapar (token proxy loglarına düşmesin).
+        let from_query = req
+            .uri()
+            .query()
+            .unwrap_or("")
+            .split('&')
+            .any(|kv| matches!(kv.split_once('='), Some(("token", value)) if shared::token_eq(value, expected)));
         let from_header = req
             .headers()
             .get("x-auth-token")
             .and_then(|v| v.to_str().ok())
-            == Some(expected.as_str());
+            .map(|v| shared::token_eq(v, expected))
+            .unwrap_or(false);
         if !(from_query || from_header) {
             return (
                 StatusCode::UNAUTHORIZED,

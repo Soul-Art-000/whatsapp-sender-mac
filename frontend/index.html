@@ -226,9 +226,13 @@
       }
       const token = params.get('token') || localStorage.getItem('wa_token') || '';
       if (token) localStorage.setItem('wa_token', token);
+      // WebSocket başlık taşıyamadığı için anahtar orada sorgu parametresiyle
+      // gider; HTTP çağrılarında başlık kullanılır ki token sunucu/proxy
+      // loglarına ve tarayıcı geçmişine düşmesin.
       const withToken = (url) => token
         ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
         : url;
+      const authHeaders = (extra) => Object.assign({}, extra || {}, token ? { 'X-Auth-Token': token } : {});
 
       const listeners = {};
       const wsBase = apiBase
@@ -248,9 +252,9 @@
       window.__TAURI__ = {
         tauri: {
           invoke: async (cmd, args) => {
-            const res = await fetch(withToken(apiBase + '/api/' + cmd), {
+            const res = await fetch(apiBase + '/api/' + cmd, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: authHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify(args || {})
             });
             if (res.status === 401) {
@@ -289,8 +293,8 @@
               try {
                 const paths = [];
                 for (const file of files) {
-                  const res = await fetch(withToken(apiBase + '/api/upload?name=' + encodeURIComponent(file.name)), {
-                    method: 'POST', body: file
+                  const res = await fetch(apiBase + '/api/upload?name=' + encodeURIComponent(file.name), {
+                    method: 'POST', headers: authHeaders(), body: file
                   });
                   if (!res.ok) throw await res.text();
                   paths.push(await res.json());

@@ -92,6 +92,25 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 - **iCloud vCard'ları `item1.TEL;type=pref:` biçiminde gruplar**; satır başına
   `TEL` aramak numaraların yarısını kaybettirir. Katlanmış satırları da aç.
 - **Ölü CDN**: `cdn.rawgit.com` kapalı. QR kütüphanesi jsDelivr'den geliyor.
+- **Tauri v1 allowlist'i derleme zamanında gömülür** (`tauri-codegen` →
+  `#[module_command_handler]`). Arayüz yalnızca `invoke` (özel komut, allowlist
+  istemez), `dialog.open` ve `event.listen` kullanır; `event`ın v1'de allowlist
+  alanı **yok** (core). Bu yüzden config `all: false` + `dialog.open: true` olarak
+  daraltıldı — varsayılan `all: true` + `shell: {all: true}` iken CDN'den gelen bir
+  betik kabuk komutu çalıştırabiliyordu.
+- **CSP bilinçli olarak `null`.** Tauri v1 CSP'ye kendi script'i için nonce ekler;
+  nonce varken `'unsafe-inline'` yok sayıldığından index.html'deki satır içi
+  script'ler bloklanabilir. CSP açılacaksa uygulama elle denenmeli (masaüstünde
+  pencere boş/tepkisiz kalırsa ilk şüpheli budur).
+- **Sunucu erişim anahtarı**: HTTP'de `X-Auth-Token` başlığı, WebSocket'te
+  `?token=` (WS başlık taşıyamaz). Karşılaştırma `shared::token_eq` ile sabit
+  zamanlıdır; `==` kullanmayın.
+- **Anti-ban rastgeleliği**: `random_delay_secs` xorshift64* kullanır. `subsec_nanos()
+  % n` gibi zaman tabanlı kısayollar macOS'ta (nanos 1000'in katı) değer uzayını
+  daraltıyor — 4-9 yerine yalnızca 4/6/8 üretiyordu.
+- **Mac klonunda hayalet mode değişiklikleri**: `/Volumes/T7` gibi harici diskte
+  `100644 → 100755` gürültüsü olur. `git config core.fileMode false` bunu susturur
+  (yerel ayar; `._*` dosyaları artık `.gitignore`'da).
 - **SQLite: açık `SELECT` varken aynı bağlantıda `UPDATE`** "table is locked"
   verebiliyor. Satırları önce `Vec`'e topla, imleci düşür, sonra güncelle
   (bkz. `take_due_scheduled`).

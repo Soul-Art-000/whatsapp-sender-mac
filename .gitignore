@@ -11,3 +11,5 @@ bundle/
 
 # macOS
 .DS_Store
+# AppleDouble (harici disk / ağ paylaşımı artıkları: `._index.html` gibi)
+._*

@@ -3,6 +3,34 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.1] - 2026-10-14
+
+### Güvenlik
+- **Tauri allowlist'i daraltıldı.** Eskiden `all: true` + `shell: {all: true}` idi;
+  arayüz yalnızca `invoke`, `dialog.open` ve `event.listen` kullandığı için artık
+  `all: false` + `dialog.open: true`. Böylece arayüzün yüklediği uzak betiklerden
+  biri (CDN) ele geçirilse bile kabuk komutu çalıştırılamaz.
+- **Erişim anahtarı artık başlıkla gönderiliyor**: HTTP çağrıları `X-Auth-Token`
+  kullanır (token sunucu/proxy loglarına ve tarayıcı geçmişine düşmez). WebSocket
+  başlık taşıyamadığı için sorgu parametresi orada korunur; sunucu ikisini de kabul
+  eder.
+- **Token karşılaştırması sabit zamanlı** (`shared::token_eq`): `==` ilk farklı
+  baytta döndüğü için zamanlama sızıntısı veriyordu.
+- `.gitignore`: `._*` AppleDouble dosyaları (harici disk artıkları) eklendi.
+- **Bağımlılık taraması** (OSV/RUSTSEC, 726 paket): `rustls 0.23.45 → 0.23.46`
+  yükseltildi (4 kayıt kapatıldı; biri kimlik doğrulamasız ~1 GiB ayırma DoS'u).
+  Kalan 10 kayıt yukarı akışa bağlı ve bilinçli olarak kabul edildi: 5'i
+  "unmaintained" bildirimi, 2'si Linux/GTK'ya özel `glib` (macOS/Windows paketinde
+  yok), `h2 0.3` (tauri v1 → hyper 0.14 zinciri; uygulama Tauri HTTP API'sini hiç
+  kullanmıyor) ve `rand 0.7` (özel logger şartı). CI'ya kırmayan bir
+  `rustsec/audit-check` adımı eklendi.
+
+### Fixed
+- **Anti-ban beklemesi gerçekten rastgele değildi**: `subsec_nanos() % 6` macOS'ta
+  nanos 1000'in katı geldiği için yalnızca 4, 6 veya 8 saniye üretiyordu; 5, 7 ve 9
+  hiç çıkmıyordu. Yerine küçük bir xorshift64* jeneratörü kondu (ek bağımlılık yok).
+  Birim testi 2000 çağrıda 4-9 arası altı değerin de üretildiğini doğrular.
+
 ## [0.5.0] - 2026-10-14
 
 ### Added
