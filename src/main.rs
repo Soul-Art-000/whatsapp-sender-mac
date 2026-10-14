@@ -120,7 +120,8 @@ async fn send_whatsapp_messages(
     message: String,
     attachment_paths: Vec<String>,
     validate: bool,
-    /// Zamanlanmış gönderim: başlangıç zamanı (UNIX saniye). `None` = hemen.
+    // Zamanlanmış gönderim: başlangıç zamanı (UNIX saniye). `None` = hemen gönder.
+    // (Tauri #[command] parametrelerinde doc yorumu derlenmez — bilinen tuzak.)
     start_at: Option<u64>,
     state: State<'_, AppState>,
     app_handle: AppHandle,

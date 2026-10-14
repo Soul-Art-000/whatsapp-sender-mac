@@ -56,6 +56,11 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 
 ## Kanıtlanmış tuzaklar
 
+- **Tauri v1 `#[command]` parametrelerinde doc yorumu (`///`) derlenmez:** yalnızca
+  `allow/cfg/deny/...` gibi yerleşik nitelikler kabul edilir → "allow, cfg, cfg_attr ... are
+  the only allowed built-in attributes in function parameters". Parametre açıklaması
+  gerekiyorsa düz `//` yorumu yaz. (Bu tuzak bir CI döngüsüne mal oldu; sandbox'ta Tauri
+  katmanı derlenemediği için yalnızca macOS/Windows işinde görünür.)
 - **Tauri v1 `#[command]` argümanları JS'te camelCase**: `attachment_paths` ↔
   `attachmentPaths`, `contact_ids` ↔ `contactIds`. Yanlış yazarsan argüman `None`/hata
   olur ve sessizce bozulur.
