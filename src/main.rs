@@ -7,10 +7,16 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
-use tauri::{command, AppHandle, Manager, State};
+use tauri::{
+    command, AppHandle, CustomMenuItem, Manager, State, SystemTray, SystemTrayEvent,
+    SystemTrayMenu, SystemTrayMenuItem, WindowEvent,
+};
 
-use whatsapp_sender::shared::{self, AppState, Contact, Group, ImportResult, SendSummary};
+use whatsapp_sender::shared::{
+    self, AppState, Contact, Group, ImportResult, ScheduledJob, SendSummary,
+};
 
 fn data_dir(app: &AppHandle) -> PathBuf {
     app.path_resolver()
@@ -120,9 +126,6 @@ async fn send_whatsapp_messages(
     message: String,
     attachment_paths: Vec<String>,
     validate: bool,
-    // Zamanlanmış gönderim: başlangıç zamanı (UNIX saniye). `None` = hemen gönder.
-    // (Tauri #[command] parametrelerinde doc yorumu derlenmez — bilinen tuzak.)
-    start_at: Option<u64>,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<SendSummary, String> {
@@ -133,6 +136,12 @@ async fn send_whatsapp_messages(
         .clone()
         .ok_or_else(|| "WhatsApp bağlı değil! Lütfen önce QR kodu okutun.".to_string())?;
 
+    // Aynı anda tek gönderim: zamanlanmış iş sürerken yeni bir toplu gönderim
+    // başlatılırsa ikisi de aynı WhatsApp oturumunu bozar.
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return Err("Şu anda başka bir gönderim sürüyor. Bitmesini bekleyin.".to_string());
+    }
+
     state.stop.store(false, Ordering::SeqCst);
     let stop = state.stop.clone();
 
@@ -141,17 +150,18 @@ async fn send_whatsapp_messages(
         let _ = emit_handle.emit_all("send_status", s);
     };
 
-    let summary = shared::send_batch(
+    let result = shared::send_batch(
         client,
         &contacts,
         &message,
         &attachment_paths,
         validate,
-        start_at,
         &stop,
         emit,
     )
-    .await?;
+    .await;
+    state.busy.store(false, Ordering::SeqCst);
+    let summary = result?;
 
     let _ = app_handle.emit_all("send_done", summary.clone());
     Ok(summary)
@@ -160,6 +170,49 @@ async fn send_whatsapp_messages(
 #[command]
 fn stop_sending(state: State<'_, AppState>) {
     state.stop.store(true, Ordering::SeqCst);
+}
+
+// ------------------------------------------------------------- zamanlanmış
+
+/// Mesajı kuyruğa yazar; gönderim ayrı bir arka plan turunda yapılır.
+#[command]
+fn schedule_messages(
+    contacts: Vec<Contact>,
+    message: String,
+    attachment_paths: Vec<String>,
+    send_at: u64,
+    validate: bool,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    shared::add_scheduled(
+        &state.db.lock().unwrap(),
+        send_at,
+        &message,
+        &attachment_paths,
+        &contacts,
+        validate,
+    )
+}
+
+#[command]
+fn get_scheduled(state: State<'_, AppState>) -> Result<Vec<ScheduledJob>, String> {
+    shared::list_scheduled(&state.db.lock().unwrap())
+}
+
+#[command]
+fn cancel_scheduled(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    shared::cancel_scheduled(&state.db.lock().unwrap(), id)
+}
+
+/// Kaçırılmış/hatalı işi hemen gönder.
+#[command]
+fn send_scheduled_now(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    shared::send_scheduled_now(&state.db.lock().unwrap(), id)
+}
+
+#[command]
+fn clear_scheduled_history(state: State<'_, AppState>) -> Result<usize, String> {
+    shared::clear_finished_scheduled(&state.db.lock().unwrap())
 }
 
 // ------------------------------------------------------------------ gruplar
@@ -185,8 +238,43 @@ fn delete_group(name: String, state: State<'_, AppState>) -> Result<(), String> 
 
 // -------------------------------------------------------------------- main
 
+/// Menü çubuğundaki simgeden pencereyi geri getirir.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn main() {
+    let tray = SystemTray::new().with_menu(
+        SystemTrayMenu::new()
+            .add_item(CustomMenuItem::new("show", "Pencereyi Aç"))
+            .add_native_item(SystemTrayMenuItem::Separator)
+            .add_item(CustomMenuItem::new("quit", "Çıkış")),
+    );
+
     tauri::Builder::default()
+        .system_tray(tray)
+        .on_system_tray_event(|app, event| match event {
+            SystemTrayEvent::LeftClick { .. } | SystemTrayEvent::DoubleClick { .. } => {
+                show_main_window(app);
+            }
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "show" => show_main_window(app),
+                "quit" => std::process::exit(0),
+                _ => {}
+            },
+            _ => {}
+        })
+        // Pencereyi kapatmak uygulamayı öldürmesin: menü çubuğunda beklerken
+        // zamanlanmış gönderimler çalışmaya devam eder.
+        .on_window_event(|event| {
+            if let WindowEvent::CloseRequested { api, .. } = event.event() {
+                api.prevent_close();
+                let _ = event.window().hide();
+            }
+        })
         .setup(|app| {
             let app_dir = data_dir(&app.handle());
             std::fs::create_dir_all(&app_dir).unwrap();
@@ -197,6 +285,21 @@ fn main() {
             if app_dir.join("wa_bot.db").exists() {
                 spawn_connect(app.handle());
             }
+            // Zamanlanmış mesajlar: pencere kapalıyken (menü çubuğunda) de
+            // çalışan arka plan turu.
+            let sched_handle = app.handle();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(shared::SCHEDULE_POLL_SECS)).await;
+                    let handle = sched_handle.clone();
+                    let emit_handle = handle.clone();
+                    let emit = move |name: &str, payload: serde_json::Value| {
+                        let _ = emit_handle.emit_all(name, payload);
+                    };
+                    let state = handle.state::<AppState>();
+                    shared::scheduler_tick(&state, emit).await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -211,6 +314,11 @@ fn main() {
             logout_whatsapp,
             send_whatsapp_messages,
             stop_sending,
+            schedule_messages,
+            get_scheduled,
+            cancel_scheduled,
+            send_scheduled_now,
+            clear_scheduled_history,
             save_group,
             get_groups,
             delete_group

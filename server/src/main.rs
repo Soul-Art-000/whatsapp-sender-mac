@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -63,9 +63,22 @@ struct SendArgs {
     attachment_paths: Vec<String>,
     #[serde(default)]
     validate: bool,
-    /// Zamanlanmış gönderim (UNIX saniye); arayüz `startAt` gönderir.
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleArgs {
+    contacts: Vec<Contact>,
+    message: String,
     #[serde(default)]
-    start_at: Option<u64>,
+    attachment_paths: Vec<String>,
+    #[serde(default = "default_true")]
+    validate: bool,
+    send_at: u64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -179,6 +192,42 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
             srv.state.stop.store(true, Ordering::SeqCst);
             Ok(Value::Null)
         }
+        "schedule_messages" => {
+            let a: ScheduleArgs = parse_args(args)?;
+            let id = shared::add_scheduled(
+                &srv.state.db.lock().unwrap(),
+                a.send_at,
+                &a.message,
+                &a.attachment_paths,
+                &a.contacts,
+                a.validate,
+            )?;
+            Ok(json!(id))
+        }
+        "get_scheduled" => {
+            let list = shared::list_scheduled(&srv.state.db.lock().unwrap())?;
+            Ok(json!(list))
+        }
+        "cancel_scheduled" => {
+            let a: HashMap<String, i64> = parse_args(args)?;
+            shared::cancel_scheduled(
+                &srv.state.db.lock().unwrap(),
+                a.get("id").copied().unwrap_or_default(),
+            )?;
+            Ok(Value::Null)
+        }
+        "send_scheduled_now" => {
+            let a: HashMap<String, i64> = parse_args(args)?;
+            shared::send_scheduled_now(
+                &srv.state.db.lock().unwrap(),
+                a.get("id").copied().unwrap_or_default(),
+            )?;
+            Ok(Value::Null)
+        }
+        "clear_scheduled_history" => {
+            let n = shared::clear_finished_scheduled(&srv.state.db.lock().unwrap())?;
+            Ok(json!(n))
+        }
         "save_group" => {
             let a: SaveGroupArgs = parse_args(args)?;
             shared::save_group(&srv.state.db.lock().unwrap(), &a.name, &a.contact_ids)?;
@@ -215,6 +264,11 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
         .clone()
         .ok_or_else(|| "WhatsApp bağlı değil! Lütfen önce QR kodu okutun.".to_string())?;
 
+    // Aynı anda tek gönderim (zamanlanmış tur da bu bayrağı kullanır).
+    if srv.state.busy.swap(true, Ordering::SeqCst) {
+        return Err("Şu anda başka bir gönderim sürüyor. Bitmesini bekleyin.".to_string());
+    }
+
     srv.state.stop.store(false, Ordering::SeqCst);
     let stop = srv.state.stop.clone();
     let tx = srv.events.clone();
@@ -222,17 +276,18 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
         let _ = tx.send(json!({ "event": "send_status", "payload": msg }));
     };
 
-    let summary = shared::send_batch(
+    let result = shared::send_batch(
         client,
         &args.contacts,
         &args.message,
         &args.attachment_paths,
         args.validate,
-        args.start_at,
         &stop,
         emit,
     )
-    .await?;
+    .await;
+    srv.state.busy.store(false, Ordering::SeqCst);
+    let summary = result?;
 
     let _ = srv
         .events
@@ -460,6 +515,19 @@ async fn main() {
     // Oturum daha önce eşleşmişse açılışta kendiliğinden bağlan.
     if app_dir.join("wa_bot.db").exists() {
         spawn_connect(server.clone());
+    }
+
+    // Zamanlanmış gönderimler: sunucu 7/24 açık olduğu için masaüstü
+    // uygulaması kapalıyken de bu tur işleri yollar.
+    {
+        let srv = server.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(shared::SCHEDULE_POLL_SECS)).await;
+                let emit = broadcaster(&srv);
+                shared::scheduler_tick(&srv.state, emit).await;
+            }
+        });
     }
 
     let app = Router::new()

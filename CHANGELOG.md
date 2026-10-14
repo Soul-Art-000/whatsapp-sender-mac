@@ -3,6 +3,36 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.0] - 2026-10-14
+
+### Added
+- **Zamanlanmış mesaj kuyruğu (Gmail'deki "zamanlanmış" gibi):** iş `contacts.sqlite`
+  içindeki `scheduled` tablosuna yazılır, gönderim 15 saniyelik arka plan turunda
+  (`scheduler_tick`) yapılır. Bekleyen iş gönderim hattını **kilitlemez**: bu sırada
+  başka bir liste hemen gönderilebilir.
+- Arayüzde **Zamanlanmış Mesajlar** paneli: saat, durum (Bekliyor/Gönderiliyor/
+  Gönderildi/Hata/Kaçırıldı), kişi sayısı ve önizleme; **İptal**, kaçırılan/hatalı iş
+  için **Şimdi gönder**, bitmişler için **Geçmişi temizle**. Liste uygulama yeniden
+  açıldığında da yerinde kalır.
+- **Menü çubuğunda bekleme**: pencereyi kapatmak uygulamayı kapatmaz, gizler
+  (`system-tray`); simgeye tıklayınca geri gelir, "Çıkış" tamamen kapatır.
+  Zamanlanmış mesajlar pencere kapalıyken de gider.
+- Sunucu modu aynı kuyruğu kullanır: sunucu 7/24 açıkken masaüstü kapalı olsa da
+  zamanlanmış mesajlar yollanır.
+- `src/shared.rs` birim testleri: kuyruğa yazma, geçmiş saat/boş iş reddi, işin bir kez
+  alınması, gönderim ortasında kapanan işin yeniden kuyruğa girmesi, kaçırılma kuralı,
+  iptal ve geçmiş temizliği.
+
+### Changed
+- **Zamanlama artık gönderimi bloklamıyor.** 0.4.0'daki `send_batch(start_at)` +
+  `wait_until` yaklaşımı kaldırıldı: gönderim komutu saati gelene kadar bekliyordu,
+  bu yüzden o sırada başka liste gönderilemiyordu ve uygulama kapanınca zamanlama
+  kayboluyordu. Kuyruk yaklaşımı ikisini de çözer.
+- **Aynı anda tek gönderim** (`AppState.busy`): elle gönderim sürerken ikinci bir toplu
+  gönderim reddedilir; zamanlanmış iş kaybolmaz, kuyrukta bekler.
+- Vakti 2 saatten fazla geçen işler kendiliğinden gönderilmez, "Kaçırıldı" olur.
+- Gönderim ortasında kapanan iş `sending` kalır ve sonraki turda yeniden kuyruğa alınır.
+
 ## [0.4.0]
 
 - **Zamanlanmış gönderim:** mesaj panelinden tarih/saat seçilir; gönderim o

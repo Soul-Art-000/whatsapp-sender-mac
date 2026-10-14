@@ -92,6 +92,9 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 - **iCloud vCard'ları `item1.TEL;type=pref:` biçiminde gruplar**; satır başına
   `TEL` aramak numaraların yarısını kaybettirir. Katlanmış satırları da aç.
 - **Ölü CDN**: `cdn.rawgit.com` kapalı. QR kütüphanesi jsDelivr'den geliyor.
+- **SQLite: açık `SELECT` varken aynı bağlantıda `UPDATE`** "table is locked"
+  verebiliyor. Satırları önce `Vec`'e topla, imleci düşür, sonra güncelle
+  (bkz. `take_due_scheduled`).
 
 ## CI / yayın akışı
 
@@ -129,12 +132,26 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 
 ## Zamanlanmış gönderim
 
-`send_batch` son parametre olarak `start_at: Option<u64>` (UNIX saniye) alır;
-masaüstünde Tauri argümanı `startAt`, sunucuda `SendArgs.start_at`. Bekleme
-`wait_until` ile yapılır: 500 ms'de bir "Durdur" bayrağına bakar, uzun
-beklemelerde dakikada bir kalan süreyi bildirir. İptal edilirse hiçbir mesaj
-gitmez ve tüm liste "kalanlar" olarak döner. Uygulama kapanınca zamanlama
-kaybolur (kuyruk veritabanına yazılmadı).
+Zamanlama **kuyruk**tur, bekleme değil: `add_scheduled` işi `scheduled` tablosuna
+yazar, `scheduler_tick` (masaüstünde ve sunucuda 15 sn'lik tur) vakti geleni
+`send_batch` ile yollar. `send_batch` bu yüzden **bloklamaz** — 0.4.0'daki
+`start_at`/`wait_until` yaklaşımı bu yüzden kaldırıldı (saati gelene kadar
+gönderim hattı kilitli kalıyordu ve uygulama kapanınca zamanlama uçuyordu).
+
+- Tur yalnızca `AppState.busy` boşken çalışır; elle gönderim de aynı bayrağı
+  kullanır, yani aynı anda tek gönderim olur (`scheduler_tick` meşgulse turu atlar,
+  iş kuyrukta bekler).
+- `sending` durumunda kalmış satır `take_due_scheduled` başında `pending`e çevrilir
+  (gönderim ortasında kapanma) → mesaj kaybolmaz.
+- Vakti `SCHEDULE_MISSED_GRACE_SECS` (2 saat) geçen iş kendiliğinden gönderilmez,
+  "Kaçırıldı" olur; arayüzdeki **Şimdi gönder** `send_scheduled_now` ile tekrar
+  kuyruğa alır.
+- Masaüstünde pencere kapatılınca uygulama ölmesin diye tepsi var:
+  `tauri` bağımlılığında `system-tray` özelliği + `tauri.conf.json` →
+  `tauri.systemTray.iconPath` şart. `iconPath` paketlenen ikonlardan biri olmalı
+  (`icons/32x32.png`); `icons/icon.png` `bundle.icon` listesinde **yok**. Pencereyi
+  gizlemek için `WindowEvent::CloseRequested` + `api.prevent_close()`, geri getirmek
+  için menüdeki "Pencereyi Aç".
 
 ## Açık işler
 
@@ -143,5 +160,7 @@ kaybolur (kuyruk veritabanına yazılmadı).
 - `icons/icon.ico` girdileri Pillow yüzünden PNG formatında; Windows 10/11
   destekliyor ama spec için küçük boyutları DIB yapmak daha güvenli
   (`magick source.png -define icon:auto-resize=256,128,64,48,32,24,16 icon.ico`).
-- Uzun gönderimler uygulama kapanınca kayboluyor; kuyruğu veritabanına yazıp
-  kaldığı yerden devam etme fikri duruyor.
+- Zamanlanmış kuyruk yapıldı (`scheduled` tablosu + `scheduler_tick`); ayrıca
+  canlı WhatsApp ile denenmesi gerekiyor (kuyruk mantığının birim testleri var).
+- **Elle** başlatılan uzun gönderim hâlâ ortada kapanınca kayboluyor; onu da aynı
+  kuyruğa yazıp kaldığı yerden sürdürmek açık bir iş.

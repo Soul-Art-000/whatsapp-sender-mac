@@ -4,7 +4,7 @@
 //! komut katmanı) ve sunucu ikilisi (`src/bin/whatsapp-server.rs`, HTTP/WS
 //! katmanı). Böylece gönderim/anti-ban/import mantığı tek yerde kalır.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +25,9 @@ pub struct AppState {
     pub stop: Arc<AtomicBool>,
     /// Aynı anda iki kez bağlanmayı engeller.
     pub connecting: Arc<AtomicBool>,
+    /// Şu anda bir toplu gönderim (elle ya da zamanlanmış) sürüyor mu.
+    /// İki gönderimin aynı anda WhatsApp istemcisini kullanmasını engeller.
+    pub busy: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -34,6 +37,7 @@ impl AppState {
             client: Mutex::new(None),
             stop: Arc::new(AtomicBool::new(false)),
             connecting: Arc::new(AtomicBool::new(false)),
+            busy: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -275,48 +279,6 @@ pub fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Kalan süreyi insan diline çevirir: "2 sa 5 dk", "13 dk", "45 sn".
-pub fn human_left(secs: u64) -> String {
-    if secs >= 3600 {
-        format!("{} sa {} dk", secs / 3600, (secs % 3600) / 60)
-    } else if secs >= 60 {
-        format!("{} dk", secs / 60)
-    } else {
-        format!("{} sn", secs)
-    }
-}
-
-/// Zamanlanmış gönderimin başlangıç saatini bekler.
-///
-/// Her 500 ms'de "Durdur" bayrağına bakar, bu yüzden iptal anında etkilidir.
-/// `true` = zaman geldi, `false` = durduruldu. Arayüz, uzun beklemelerde her
-/// dakika, son dakikada her 10 saniyede bir kalan süreyi görür.
-pub async fn wait_until<F: Fn(String) + Send>(deadline: u64, stop: &AtomicBool, emit: &F) -> bool {
-    let mut last_shown = u64::MAX;
-    loop {
-        if stop.load(Ordering::SeqCst) {
-            return false;
-        }
-        let left = deadline.saturating_sub(now_unix());
-        if left == 0 {
-            return true;
-        }
-        let tick = if left > 60 {
-            left.is_multiple_of(60)
-        } else {
-            left.is_multiple_of(10)
-        };
-        if tick && left != last_shown {
-            last_shown = left;
-            emit(format!(
-                "Zamanlama: {} sonra gönderilecek (Durdur ile iptal edilir).",
-                human_left(left)
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
 /// "905551234567:12@s.whatsapp.net" -> "905551234567"
 pub fn jid_user(jid: &wa_rs::Jid) -> String {
     jid.to_string()
@@ -521,14 +483,12 @@ pub fn push_pending(summary: &mut SendSummary, rest: &[&Contact]) {
 /// - Ekleri (resim/belge) bir kez yükler, "Durdur" ile bekleme sırasında da kesilebilir.
 // Argümanlar tek tek geçiliyor: hepsi gönderim çağrısının doğal parçası ve bir
 // seçenek struct'ı sarmalamak iki çağıran için de dolaylılık katardı.
-#[allow(clippy::too_many_arguments)]
 pub async fn send_batch<F: Fn(String) + Send>(
     client: Arc<wa_rs::Client>,
     contacts: &[Contact],
     message: &str,
     attachment_paths: &[String],
     validate: bool,
-    start_at: Option<u64>,
     stop: &AtomicBool,
     emit: F,
 ) -> Result<SendSummary, String> {
@@ -540,19 +500,10 @@ pub async fn send_batch<F: Fn(String) + Send>(
         pending: Vec::new(),
     };
 
-    // 0) Zamanlanmış gönderim: başlangıç saatini bekle. "Durdur" bekleme
-    //    sırasında da iptal eder; o durumda hiçbir mesaj gitmez ve tüm liste
-    //    "kalanlar" olarak geri döner.
-    if let Some(at) = start_at {
-        if !wait_until(at, stop, &emit).await {
-            emit("Zamanlanan gönderim iptal edildi.".to_string());
-            let all: Vec<&Contact> = contacts.iter().collect();
-            push_pending(&mut summary, &all);
-            return Ok(summary);
-        }
-    }
-
-    // 0b) Bağlantı hazır değilse kısa bir süre bekle; gelmezse anlaşılır hata ver.
+    // Not: zamanlanmış gönderim burada beklenmez. İş `scheduled` kuyruğuna
+    // yazılır ve vakti gelince `scheduler_tick` bu fonksiyonu çağırır; böylece
+    // bekleme sırasında gönderim hattı kilitli kalmaz.
+    // 0) Bağlantı hazır değilse kısa bir süre bekle; gelmezse anlaşılır hata ver.
     if !(client.is_connected() && client.is_logged_in()) {
         emit("WhatsApp bağlantısı bekleniyor...".to_string());
         client
@@ -720,6 +671,86 @@ pub async fn send_batch<F: Fn(String) + Send>(
 }
 
 /// Ekin yolu olmadan yalnızca dosya adı (WhatsApp alıcıda bunu gösterir).
+/// Vakti gelen zamanlanmış işleri gönderir (masaüstünde ve sunucuda aynı
+/// fonksiyon, turu çağıran taraf kurar).
+///
+/// Elle bir gönderim sürüyorsa ya da WhatsApp bağlı değilse hiçbir şeye
+/// dokunmaz: iş kuyrukta bekler, sonraki turda gider.
+pub async fn scheduler_tick<E>(state: &AppState, emit: E)
+where
+    E: Fn(&str, serde_json::Value) + Clone + Send,
+{
+    // Sıra: aynı anda tek gönderim. Meşgulse bu turu atla (iş bekler).
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let client = { state.client.lock().unwrap().clone() };
+    let client = match client {
+        Some(c) => c,
+        None => {
+            state.busy.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+
+    let due = {
+        let db = state.db.lock().unwrap();
+        take_due_scheduled(&db, now_unix()).unwrap_or_default()
+    };
+
+    for job in &due {
+        state.stop.store(false, Ordering::SeqCst);
+        emit(
+            "send_status",
+            serde_json::Value::String(format!(
+                "⏰ Zamanlanmış gönderim başladı: {} kişi",
+                job.contacts.len()
+            )),
+        );
+
+        let batch_emit = {
+            let emit = emit.clone();
+            move |msg: String| emit("send_status", serde_json::Value::String(msg))
+        };
+
+        let result = send_batch(
+            client.clone(),
+            &job.contacts,
+            &job.message,
+            &job.attachments,
+            job.validate,
+            &state.stop,
+            batch_emit,
+        )
+        .await;
+
+        let (status, detail) = match &result {
+            Ok(s) if s.failed == 0 && s.pending.is_empty() => {
+                ("sent", format!("{}/{} gönderildi", s.sent, s.total))
+            }
+            Ok(s) => (
+                "failed",
+                format!(
+                    "{}/{} gönderildi, {} kişi kaldı",
+                    s.sent,
+                    s.total,
+                    s.pending.len() + s.failed
+                ),
+            ),
+            Err(e) => ("failed", e.clone()),
+        };
+
+        {
+            let db = state.db.lock().unwrap();
+            let _ = finish_scheduled(&db, job.id, status, &detail);
+        }
+        emit("scheduled_changed", serde_json::Value::Null);
+    }
+
+    state.busy.store(false, Ordering::SeqCst);
+}
+
 pub fn base_name(path: &str) -> String {
     path.rsplit(['/', '\\'])
         .next()
@@ -903,6 +934,21 @@ pub fn init_db(app_dir: &std::path::Path) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS scheduled (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            send_at INTEGER NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            attachments TEXT NOT NULL DEFAULT '[]',
+            contacts TEXT NOT NULL DEFAULT '[]',
+            validate INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'pending',
+            detail TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(db)
 }
 // ------------------------------------------------------- komut çekirdekleri
@@ -1032,6 +1078,222 @@ pub fn delete_group(db: &Connection, name: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ------------------------------------------------------------ zamanlanmış
+//
+// Gmail'deki "zamanlanmış mesajlar" gibi: iş kuyruğa yazılır, gönderim ayrı bir
+// arka plan turunda (`scheduler_tick`) yapılır. Böylece "zamanla" demek gönderim
+// hattını kilitlemez; iş beklerken arayüz başka gönderimleri kabul eder, vakti
+// gelince kendiliğinden gider ve listeden iptal edilebilir.
+//
+// ==== SCHEDULE BEGIN ====
+// Bu blok wa-rs ve tauri'ye dokunmaz: sandbox'ta yalnızca rusqlite ile derlenip
+// test edilebilsin diye ayrı tutulmuştur (bkz. AGENTS.md doğrulama akışı).
+
+/// Kuyrukta bekleyen bir zamanlanmış gönderim.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ScheduledJob {
+    pub id: i64,
+    /// UNIX saniyesi (arayüzde yerel saat seçilir).
+    pub send_at: u64,
+    pub message: String,
+    pub attachments: Vec<String>,
+    pub contacts: Vec<Contact>,
+    pub validate: bool,
+    /// pending | sending | sent | failed | missed
+    pub status: String,
+    /// İnsan okuyabilir sonuç: "12/12 gönderildi" gibi.
+    pub detail: String,
+    pub created_at: u64,
+}
+
+/// Arka plan turunun sıklığı (saniye).
+pub const SCHEDULE_POLL_SECS: u64 = 15;
+/// Vakti bu kadar geçen iş artık kendiliğinden gönderilmez: "kaçırıldı" olur.
+pub const SCHEDULE_MISSED_GRACE_SECS: u64 = 2 * 3600;
+
+fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledJob> {
+    let attachments: String = row.get(3)?;
+    let contacts: String = row.get(4)?;
+    Ok(ScheduledJob {
+        id: row.get(0)?,
+        // SQLite INTEGER = i64; epoch saniyesi rahat sığar (rusqlite u64 desteklemez).
+        send_at: row.get::<_, i64>(1)? as u64,
+        message: row.get(2)?,
+        attachments: serde_json::from_str(&attachments).unwrap_or_default(),
+        contacts: serde_json::from_str(&contacts).unwrap_or_default(),
+        validate: row.get(5)?,
+        status: row.get(6)?,
+        detail: row.get(7)?,
+        created_at: row.get::<_, i64>(8)? as u64,
+    })
+}
+
+/// İşi kuyruğa ekler; yeni kaydın id'sini döndürür.
+pub fn add_scheduled(
+    db: &Connection,
+    send_at: u64,
+    message: &str,
+    attachments: &[String],
+    contacts: &[Contact],
+    validate: bool,
+) -> Result<i64, String> {
+    if contacts.is_empty() {
+        return Err("Zamanlanacak kişi seçilmedi.".to_string());
+    }
+    if message.trim().is_empty() && attachments.is_empty() {
+        return Err("Mesaj da ek de yok.".to_string());
+    }
+    if send_at <= now_unix() {
+        return Err("Geçmiş bir saat seçilemez.".to_string());
+    }
+    let attachments =
+        serde_json::to_string(attachments).map_err(|e| format!("Ekler yazılamadı: {}", e))?;
+    let contacts =
+        serde_json::to_string(contacts).map_err(|e| format!("Kişiler yazılamadı: {}", e))?;
+    db.execute(
+        "INSERT INTO scheduled (send_at, message, attachments, contacts, validate, status, detail, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', '', ?6)",
+        params![
+            send_at as i64,
+            message,
+            attachments,
+            contacts,
+            validate,
+            now_unix() as i64
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(db.last_insert_rowid())
+}
+
+/// Kuyruğu listeler: bekleyenler (vakte göre) önce, bitenler sonra.
+pub fn list_scheduled(db: &Connection) -> Result<Vec<ScheduledJob>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at
+             FROM scheduled
+             ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END ASC,
+                      CASE WHEN status = 'pending' THEN send_at ELSE -send_at END ASC
+             LIMIT 200",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_job).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+/// Henüz başlamamış bir işi kuyruktan siler. Başlamış/bitmiş iş silinmez.
+pub fn cancel_scheduled(db: &Connection, id: i64) -> Result<(), String> {
+    let n = db
+        .execute(
+            "DELETE FROM scheduled WHERE id = ?1 AND status = 'pending'",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("Bu iş artık iptal edilemez (başlamış ya da bitmiş).".to_string());
+    }
+    Ok(())
+}
+
+/// Bitmiş işleri listeden temizler (bekleyenlere dokunmaz).
+pub fn clear_finished_scheduled(db: &Connection) -> Result<usize, String> {
+    db.execute("DELETE FROM scheduled WHERE status <> 'pending'", [])
+        .map_err(|e| e.to_string())
+}
+
+/// "Şimdi gönder": işi yeniden kuyruğa alır (kaçırılmış/hatalı işler için).
+pub fn send_scheduled_now(db: &Connection, id: i64) -> Result<(), String> {
+    // Durum ayrı sorulur: 0 satır güncellenmenin iki farklı nedeni var, ikisine
+    // de aynı mesajı vermek kullanıcıyı yanıltıyor.
+    let durum: Option<String> = db
+        .query_row(
+            "SELECT status FROM scheduled WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match durum.as_deref() {
+        None => return Err("Bu iş bulunamadı.".to_string()),
+        Some("sending") => return Err("Bu iş şu anda gönderiliyor.".to_string()),
+        _ => {}
+    }
+    db.execute(
+        "UPDATE scheduled SET status = 'pending', send_at = ?2, detail = '' WHERE id = ?1",
+        params![id, now_unix() as i64],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Vakti gelen işleri `sending` olarak ayırıp döndürür; vakti çoktan geçenleri
+/// `missed` yapar (uygulama o sırada kapalıydı).
+///
+/// `sending` durumunda kalmış satırlar (gönderim ortasında kapanma) yeniden
+/// kuyruğa alınır: tur yalnızca boşta çalıştığı için bu güvenlidir.
+pub fn take_due_scheduled(db: &Connection, now: u64) -> Result<Vec<ScheduledJob>, String> {
+    db.execute(
+        "UPDATE scheduled SET status = 'pending', detail = '' WHERE status = 'sending'",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut stmt = db
+        .prepare(
+            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at
+             FROM scheduled WHERE status = 'pending' AND send_at <= ?1 ORDER BY send_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    // Önce topla: aynı bağlantıda açık bir SELECT varken UPDATE çalıştırmak
+    // SQLite'ta "table is locked" hatası verebiliyor.
+    let jobs = stmt
+        .query_map(params![now as i64], row_to_job)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let mut due = Vec::new();
+    for job in jobs {
+        if now.saturating_sub(job.send_at) > SCHEDULE_MISSED_GRACE_SECS {
+            db.execute(
+                "UPDATE scheduled SET status = 'missed', detail = ?2 WHERE id = ?1",
+                params![
+                    job.id,
+                    "Vakti geçmiş (uygulama kapalıydı) — 'Şimdi gönder' ile yollayabilirsiniz."
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            db.execute(
+                "UPDATE scheduled SET status = 'sending', detail = 'Gönderiliyor' WHERE id = ?1",
+                params![job.id],
+            )
+            .map_err(|e| e.to_string())?;
+            due.push(job);
+        }
+    }
+    Ok(due)
+}
+
+/// İşin sonucunu yazar: `sent` | `failed` | `missed`.
+pub fn finish_scheduled(
+    db: &Connection,
+    id: i64,
+    status: &str,
+    detail: &str,
+) -> Result<(), String> {
+    db.execute(
+        "UPDATE scheduled SET status = ?2, detail = ?3 WHERE id = ?1",
+        params![id, status, detail],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ==== SCHEDULE END ====
 
 // ------------------------------------------------------------- WhatsApp
 
@@ -1270,37 +1532,6 @@ mod tests {
     }
 
     #[test]
-    fn kalan_sure_insan_diline_cevrilir() {
-        assert_eq!(human_left(45), "45 sn");
-        assert_eq!(human_left(60), "1 dk");
-        assert_eq!(human_left(13 * 60), "13 dk");
-        assert_eq!(human_left(2 * 3600 + 5 * 60), "2 sa 5 dk");
-    }
-
-    #[tokio::test]
-    async fn gecmis_zamana_zamanlama_beklemeden_baslar() {
-        let stop = AtomicBool::new(false);
-        let count = std::sync::atomic::AtomicUsize::new(0);
-        let ok = wait_until(now_unix().saturating_sub(5), &stop, &|_: String| {
-            count.fetch_add(1, Ordering::SeqCst);
-        })
-        .await;
-        assert!(ok, "geçmiş saatte bekleme bitmeli");
-        assert_eq!(
-            count.load(Ordering::SeqCst),
-            0,
-            "geçmiş saat için kalan süre mesajı yazılmamalı"
-        );
-    }
-
-    #[tokio::test]
-    async fn zamanlama_durdurulunca_iptal_edilir() {
-        let stop = AtomicBool::new(true);
-        let ok = wait_until(now_unix() + 3600, &stop, &|_: String| {}).await;
-        assert!(!ok, "Durdur basılıyken bekleme iptal edilmeli");
-    }
-
-    #[test]
     fn eksiz_mesaj_metin_mesaji_olarak_kalir() {
         let msgs = build_messages("Selam /isim", "Zeynep", &[]);
         assert_eq!(msgs.len(), 1);
@@ -1314,5 +1545,204 @@ mod tests {
                 .as_deref(),
             Some("Selam Zeynep")
         );
+    }
+    // ------------------------------------------------------- zamanlanmış
+
+    static SAYAC: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// Her test kendi geçici klasöründe çalışır (paylaşılan dosya yarışı olmasın).
+    fn gecici_db() -> (std::path::PathBuf, Connection) {
+        let n = SAYAC.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("wa-sched-{}-{}", std::process::id(), n));
+        std::fs::create_dir_all(&dir).expect("geçici klasör");
+        let db = init_db(&dir).expect("veritabanı");
+        (dir, db)
+    }
+
+    fn kisi(phone: &str) -> Contact {
+        Contact {
+            id: 1,
+            name: "Test".to_string(),
+            phone: phone.to_string(),
+        }
+    }
+
+    #[test]
+    fn zamanlanan_is_kuyruga_yazilir() {
+        let (dir, db) = gecici_db();
+        let ekler = vec!["/tmp/foto.jpg".to_string()];
+        let id = add_scheduled(
+            &db,
+            now_unix() + 600,
+            "Merhaba",
+            &ekler,
+            &[kisi("905551112233")],
+            true,
+        )
+        .expect("kuyruğa yazılmalı");
+        assert!(id > 0);
+
+        let liste = list_scheduled(&db).expect("liste");
+        assert_eq!(liste.len(), 1);
+        assert_eq!(liste[0].status, "pending");
+        assert_eq!(liste[0].message, "Merhaba");
+        assert_eq!(liste[0].attachments, ekler, "ekler geri okunmalı");
+        assert_eq!(liste[0].contacts.len(), 1);
+        assert!(liste[0].validate);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gecmis_saat_ve_bos_is_reddedilir() {
+        let (dir, db) = gecici_db();
+        let kisiler = vec![kisi("905551112233")];
+        assert!(add_scheduled(&db, now_unix() - 60, "x", &[], &kisiler, true).is_err());
+        assert!(add_scheduled(&db, now_unix() + 60, "x", &[], &[], true).is_err());
+        assert!(add_scheduled(&db, now_unix() + 60, "  ", &[], &kisiler, true).is_err());
+        assert!(list_scheduled(&db).expect("liste").is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn vakti_gelen_is_bir_kez_alinir() {
+        let (dir, db) = gecici_db();
+        let id = add_scheduled(
+            &db,
+            now_unix() + 100,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            true,
+        )
+        .unwrap();
+
+        assert!(
+            take_due_scheduled(&db, now_unix()).expect("tur").is_empty(),
+            "vakti gelmeden alınmamalı"
+        );
+
+        let alinan = take_due_scheduled(&db, now_unix() + 200).expect("tur");
+        assert_eq!(alinan.len(), 1);
+        assert_eq!(alinan[0].id, id);
+        assert_eq!(
+            list_scheduled(&db).unwrap()[0].status,
+            "sending",
+            "iş gönderiliyor olarak işaretlenmeli"
+        );
+
+        finish_scheduled(&db, id, "sent", "1/1 gönderildi").unwrap();
+        assert!(
+            take_due_scheduled(&db, now_unix() + 300)
+                .expect("tur")
+                .is_empty(),
+            "bitmiş iş tekrar gönderilmemeli"
+        );
+        let bitti = &list_scheduled(&db).unwrap()[0];
+        assert_eq!(bitti.status, "sent");
+        assert_eq!(bitti.detail, "1/1 gönderildi");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gonderim_ortasinda_kapanan_is_yeniden_kuyruga_girer() {
+        let (dir, db) = gecici_db();
+        add_scheduled(
+            &db,
+            now_unix() + 10,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            false,
+        )
+        .unwrap();
+        assert_eq!(take_due_scheduled(&db, now_unix() + 20).unwrap().len(), 1);
+        // Uygulama gönderim sırasında kapandı: satır `sending` kaldı.
+        // Sonraki tur onu yeniden almalı (mesaj kaybolmasın).
+        let tekrar = take_due_scheduled(&db, now_unix() + 40).unwrap();
+        assert_eq!(tekrar.len(), 1, "yarım kalan iş yeniden kuyruğa alınmalı");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cok_geciken_is_kacirilir() {
+        let (dir, db) = gecici_db();
+        let id = add_scheduled(
+            &db,
+            now_unix() + 10,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            true,
+        )
+        .unwrap();
+        let gec = now_unix() + SCHEDULE_MISSED_GRACE_SECS + 60;
+        assert!(
+            take_due_scheduled(&db, gec).unwrap().is_empty(),
+            "çok geç kalan iş kendiliğinden gitmez"
+        );
+        let is = &list_scheduled(&db).unwrap()[0];
+        assert_eq!(is.status, "missed");
+        assert!(!is.detail.is_empty());
+
+        // "Şimdi gönder" işi tekrar kuyruğa alır; olmayan iş için açık hata verir.
+        assert!(send_scheduled_now(&db, id).is_ok());
+        assert!(
+            send_scheduled_now(&db, 4242).is_err(),
+            "olmayan iş için hata beklenir"
+        );
+        let is = &list_scheduled(&db).unwrap()[0];
+        assert_eq!(is.status, "pending");
+        assert!(is.send_at <= now_unix() + 5);
+        assert_eq!(take_due_scheduled(&db, now_unix() + 5).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn iptal_yalnizca_bekleyen_isi_siler() {
+        let (dir, db) = gecici_db();
+        let id = add_scheduled(
+            &db,
+            now_unix() + 300,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            true,
+        )
+        .unwrap();
+        cancel_scheduled(&db, id).expect("bekleyen iş iptal edilmeli");
+        assert!(list_scheduled(&db).unwrap().is_empty());
+        assert!(
+            cancel_scheduled(&db, id).is_err(),
+            "ikinci iptal hata vermeli"
+        );
+
+        // Gönderilmiş iş iptal edilemez.
+        let id2 = add_scheduled(
+            &db,
+            now_unix() + 300,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            true,
+        )
+        .unwrap();
+        finish_scheduled(&db, id2, "sent", "1/1 gönderildi").unwrap();
+        assert!(cancel_scheduled(&db, id2).is_err());
+
+        // Geçmiş temizliği bekleyene dokunmaz.
+        let id3 = add_scheduled(
+            &db,
+            now_unix() + 300,
+            "Merhaba",
+            &[],
+            &[kisi("905551112233")],
+            true,
+        )
+        .unwrap();
+        assert_eq!(clear_finished_scheduled(&db).unwrap(), 1);
+        let kalan = list_scheduled(&db).unwrap();
+        assert_eq!(kalan.len(), 1);
+        assert_eq!(kalan[0].id, id3);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

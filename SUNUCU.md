@@ -181,6 +181,10 @@ POST /api/logout_whatsapp
 POST /api/send_whatsapp_messages    {contacts, message, attachmentPaths, validate}
 POST /api/stop_sending
 POST /api/save_group | get_groups | delete_group
+POST /api/schedule_messages          {contacts, message, attachmentPaths, validate, sendAt}
+POST /api/get_scheduled              -> [{id, send_at, contacts, status, detail, ...}]
+POST /api/cancel_scheduled | send_scheduled_now   {id}
+POST /api/clear_scheduled_history    -> silinen iş sayısı
 GET  /ws                            olay akışı (qr_code, send_status, send_done, ...)
 ```
 
@@ -192,6 +196,10 @@ Anahtar `?token=...` parametresi ya da `X-Auth-Token` başlığı ile verilir.
   kalır (yüzlerce kişide saatler). Önüne nginx koyarsanız
   `proxy_read_timeout 3600s;` verin — varsayılan 60 sn isteği koparır ve arayüz
   "kalanlar" listesini kaybeder. Caddy'de yukarıdaki `read_timeout` ayarı gerekir.
+- **Zamanlanmış işler**: Sunucu 15 saniyede bir kuyruğa bakar
+  (`SCHEDULE_POLL_SECS`); masaüstü uygulaması kapalıyken de mesajlar gider. Vakti
+  2 saatten fazla geçen iş "Kaçırıldı" olur, arayüzdeki **Şimdi gönder** ile
+  yollanır. Gönderim sürerken ikinci bir toplu gönderim reddedilir (tek istemci).
 - **Tek örnek**: Aynı `WA_DATA_DIR`'ı iki süreç açmamalı; WhatsApp oturumu tek
   istemciye aittir (Docker'da bunu `container_name` + tek servis garantiler).
 - **Yedek**: `contacts.sqlite` kişileri ve grupları tutar. `wa_bot.db` oturumdur,

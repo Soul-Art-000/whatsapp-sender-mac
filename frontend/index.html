@@ -122,13 +122,6 @@
           <p class="mt-1 text-xs text-gray-400">Resimler önizlemeli gider; diğer dosyalar (pdf, ofis, zip...) belge olarak. İlk ek, yazdığınız mesajı taşır.</p>
         </div>
 
-        <div class="mb-2 flex items-center gap-2">
-          <label for="scheduleAt" class="text-xs text-gray-500 shrink-0">Zamanla</label>
-          <input type="datetime-local" id="scheduleAt" class="flex-1 min-w-0 border rounded p-2 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <button id="clearScheduleBtn" class="text-xs text-gray-400 hover:text-gray-700 underline shrink-0 hidden">Temizle</button>
-        </div>
-        <p class="mb-3 text-xs text-gray-400">Boş bırakırsan hemen gönderilir. Zamanlanan gönderim için uygulama açık kalmalı; "Durdur" ile iptal edilir.</p>
-
         <button id="sendBtn" class="button-spring w-full bg-green-600 text-white font-medium py-3 rounded-lg shadow-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
           Seçili Kişilere Gönder
         </button>
@@ -145,6 +138,23 @@
         <button id="retryBtn" class="button-spring w-full mt-2 bg-amber-50 text-amber-700 border border-amber-200 font-medium py-2 rounded-lg hover:bg-amber-100 hidden">
           Kalanları gönder
         </button>
+
+        <!-- Zamanlanmış gönderimler: mesaj kuyruğa yazılır, vakti gelince
+             arka planda kendiliğinden gider, buradan iptal edilebilir. -->
+        <div class="mt-4 pt-4 border-t border-gray-100">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Zamanlanmış Mesajlar <span id="scheduledCount" class="text-gray-400">(0)</span></h3>
+            <button id="clearScheduledBtn" class="text-xs text-gray-400 hover:text-gray-700 underline hidden">Geçmişi temizle</button>
+          </div>
+
+          <div class="flex gap-2 mt-2">
+            <input type="datetime-local" id="scheduleAt" class="flex-1 min-w-0 border rounded p-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button id="scheduleBtn" class="button-spring bg-blue-600 text-white text-sm px-3 rounded-lg hover:bg-blue-700 font-medium whitespace-nowrap disabled:opacity-50">Zamanla</button>
+          </div>
+          <p class="mt-1 text-xs text-gray-400">Yukarıdaki mesajı seçili kişilere o saatte gönderir. Beklerken başka liste gönderebilirsiniz; pencereyi kapatsanız da uygulama menü çubuğunda bekler.</p>
+
+          <ul id="scheduledList" class="mt-3 space-y-2 max-h-44 overflow-y-auto"></ul>
+        </div>
 
         <div id="progressWrap" class="mt-4 hidden">
           <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -309,6 +319,7 @@
     let attachments = [];
     let sending = false;
     let lastFailed = [];
+    let scheduled = [];
 
     const $ = (id) => document.getElementById(id);
     const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => ({
@@ -319,6 +330,133 @@
       const pct = total > 0 ? Math.round((done / total) * 100) : 0;
       $('progressBar').style.width = pct + '%';
     }
+
+    // ---- Zamanlanmış gönderimler -------------------------------------
+    const SCHEDULE_STATUS = {
+      pending: { text: 'Bekliyor', cls: 'bg-blue-50 text-blue-700' },
+      sending: { text: 'Gönderiliyor', cls: 'bg-amber-50 text-amber-700' },
+      sent: { text: 'Gönderildi', cls: 'bg-green-50 text-green-700' },
+      failed: { text: 'Hata', cls: 'bg-red-50 text-red-600' },
+      missed: { text: 'Kaçırıldı', cls: 'bg-amber-50 text-amber-700' }
+    };
+    const pad2 = (n) => String(n).padStart(2, '0');
+
+    // datetime-local yerel saat ister: epoch saniyesini yerel biçime çevir.
+    function localInputValue(ms) {
+      const d = new Date(ms);
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+
+    function formatJobTime(ts) {
+      const d = new Date(ts * 1000);
+      const saat = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      return d.toDateString() === new Date().toDateString()
+        ? `Bugün ${saat}`
+        : `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)} ${saat}`;
+    }
+
+    async function loadScheduled() {
+      try {
+        scheduled = await invoke('get_scheduled');
+        renderScheduled();
+      } catch (e) {
+        console.error("Zamanlanmış liste yüklenemedi:", e);
+      }
+    }
+
+    function renderScheduled() {
+      const el = $('scheduledList');
+      const bekleyen = scheduled.filter(j => j.status === 'pending').length;
+      $('scheduledCount').textContent = `(${bekleyen})`;
+      $('clearScheduledBtn').classList.toggle('hidden', scheduled.length === bekleyen);
+
+      if (scheduled.length === 0) {
+        el.innerHTML = '<li class="text-xs text-gray-400">Zamanlanmış mesaj yok.</li>';
+        return;
+      }
+
+      el.innerHTML = scheduled.map(j => {
+        const st = SCHEDULE_STATUS[j.status] || { text: j.status, cls: 'bg-gray-100 text-gray-600' };
+        const onizleme = j.message ? esc(j.message).slice(0, 60) : '(yalnızca ek)';
+        const ek = j.attachments.length ? ` · ${j.attachments.length} ek` : '';
+        const dugmeler = j.status === 'pending'
+          ? '<button data-act="cancel" data-id="' + j.id + '" class="text-xs text-red-600 hover:underline">İptal</button>'
+          : (j.status === 'missed' || j.status === 'failed'
+              ? '<button data-act="now" data-id="' + j.id + '" class="text-xs text-blue-600 hover:underline">Şimdi gönder</button>'
+              : '');
+        return `
+        <li class="bg-gray-50 border border-gray-200 rounded px-2 py-1.5 fade-enter">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-semibold text-gray-700">⏰ ${formatJobTime(j.send_at)}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded ${st.cls}">${st.text}</span>
+          </div>
+          <div class="text-xs text-gray-500 truncate">${j.contacts.length} kişi${ek} · ${onizleme}</div>
+          ${j.detail ? `<div class="text-xs text-gray-400 truncate">${esc(j.detail)}</div>` : ''}
+          ${dugmeler ? `<div class="mt-1">${dugmeler}</div>` : ''}
+        </li>`;
+      }).join('');
+    }
+
+    $('scheduleBtn').onclick = async () => {
+      const list = contacts.filter(c => selectedContactIds.has(c.id));
+      if (list.length === 0) return alert("Lütfen tablodan en az 1 kişi seçin!");
+      const msg = $('messageBox').value.trim();
+      if (!msg && attachments.length === 0) return alert("Lütfen bir mesaj yazın veya bir dosya ekleyin.");
+      const raw = $('scheduleAt').value;
+      if (!raw) return alert("Lütfen gönderim saatini seçin.");
+      const sendAt = Math.floor(new Date(raw).getTime() / 1000);
+      if (!Number.isFinite(sendAt)) return alert("Saat okunamadı.");
+      if (sendAt <= Math.floor(Date.now() / 1000)) return alert("Geçmiş bir saat seçilemez.");
+
+      const btn = $('scheduleBtn');
+      btn.disabled = true;
+      try {
+        await invoke('schedule_messages', {
+          contacts: list,
+          message: msg,
+          attachmentPaths: [...attachments],
+          validate: $('validateCheck').checked,
+          sendAt
+        });
+        await loadScheduled();
+        const st = $('sendStatus');
+        st.classList.remove('hidden');
+        st.textContent = `Zamanlandı: ${formatJobTime(sendAt)} · ${list.length} kişi. Pencere kapansa da menü çubuğunda çalışır.`;
+        $('scheduleAt').value = localInputValue(Date.now() + 5 * 60000);
+      } catch (e) {
+        alert("Zamanlanamadı: " + e);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    $('scheduledList').addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const id = parseInt(btn.dataset.id, 10);
+      btn.disabled = true;
+      try {
+        if (btn.dataset.act === 'cancel') {
+          if (!confirm('Bu zamanlanmış mesaj iptal edilsin mi?')) { btn.disabled = false; return; }
+          await invoke('cancel_scheduled', { id });
+        } else {
+          await invoke('send_scheduled_now', { id });
+        }
+        await loadScheduled();
+      } catch (err) {
+        alert(String(err));
+        btn.disabled = false;
+      }
+    });
+
+    $('clearScheduledBtn').onclick = async () => {
+      try {
+        await invoke('clear_scheduled_history');
+        await loadScheduled();
+      } catch (e) { alert(String(e)); }
+    };
+
+    listen('scheduled_changed', () => { loadScheduled(); });
 
     async function loadData() {
       try {
@@ -627,22 +765,6 @@
       } catch (e) { console.error(e); }
     };
 
-    // Zamanlama: seçilen yerel saat UNIX saniyeye çevrilir (boş = hemen gönder).
-    function scheduleEpoch() {
-      const v = $('scheduleAt').value;
-      if (!v) return null;
-      const t = new Date(v).getTime();
-      return Number.isNaN(t) ? null : Math.floor(t / 1000);
-    }
-
-    $('scheduleAt').oninput = () => {
-      $('clearScheduleBtn').classList.toggle('hidden', !$('scheduleAt').value);
-    };
-    $('clearScheduleBtn').onclick = () => {
-      $('scheduleAt').value = '';
-      $('clearScheduleBtn').classList.add('hidden');
-    };
-
     // Send Message
     async function runSend(list) {
       if (sending) return;
@@ -658,9 +780,8 @@
       $('retryBtn').classList.add('hidden');
       $('stopBtn').classList.remove('hidden');
       $('progressWrap').classList.remove('hidden');
-      const startAt = scheduleEpoch();
       status.classList.remove('hidden');
-      status.textContent = startAt ? 'Zamanlanıyor...' : 'Başlatılıyor...';
+      status.textContent = 'Başlatılıyor...';
       setProgress(0, list.length);
 
       try {
@@ -668,8 +789,7 @@
           contacts: list,
           message: msg,
           attachmentPaths: [...attachments],
-          validate: $('validateCheck').checked,
-          startAt
+          validate: $('validateCheck').checked
         });
         setProgress(list.length, list.length);
 
@@ -799,6 +919,8 @@
       try {
         applyStatus(await invoke('get_wa_status'));
       } catch (e) { console.error(e); }
+      $('scheduleAt').value = localInputValue(Date.now() + 5 * 60000);
+      await loadScheduled();
     });
   </script>
 </body>
