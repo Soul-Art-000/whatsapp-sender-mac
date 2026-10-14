@@ -133,6 +133,23 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
   macOS'ta simge hiç görünmüyordu). Doğrulama: dmg'yi indir, `7z x`,
   `file .../Contents/Resources/icon.icns` → "Mac OS X icon" görmelisin.
 
+## Arayüzü masaüstü derlemesi olmadan doğrulama (işe yarayan yöntem)
+
+Tauri katmanı Linux'ta derlenemediği için arayüz değişikliklerini şöyle denedim:
+
+1. Sunucu ikilisini derle ve token'sız başlat:
+   `WA_BIND=127.0.0.1:8102 WA_DATA_DIR=/tmp/wa-test CARGO_TARGET_DIR=/opt/wcheck cargo build -p whatsapp-server`
+2. Sayfayı çek: `curl -s http://127.0.0.1:8102/ -o /tmp/page.html`
+3. Node harness: HTML'deki iki satır içi `<script>` bloğunu sırayla al, başına küçük
+   bir DOM stub'ı ekle (`getElementById` **yalnızca HTML'de gerçekten olan id**'leri
+   döndürsün — yazım hatalarını yakalar), `location.search='?api=http://127.0.0.1:8102'`
+   ver, `WebSocket`'i hiç olay tetiklemeyen bir sınıfla değiştir ve sonuna test
+   kodunu ekleyip `node` ile çalıştır. Köprü `fetch` ile gerçek sunucuya gider, yani
+   Tauri komut adları/argümanları (camelCase) gerçekten denenmiş olur.
+4. `fetch`/`getElementById` stub'ı sayesinde "Zamanla → listede görünüyor mu → İptal
+   listeyi boşaltıyor mu" akışı uçtan uca doğrulanır; ağır DOM (querySelectorAll gibi)
+   desteklenmediği için yalnızca kişi listesi render'ı hata verir, bu beklenen gürültüdür.
+
 ## Ortam notları (sandbox)
 
 - `terminal` bir Linux konteynerinde çalışır; `/workspace` = Mac'te
