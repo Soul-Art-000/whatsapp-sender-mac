@@ -175,6 +175,10 @@
       <h3 class="text-lg font-bold mb-2">WhatsApp Web ile Tara</h3>
       <p class="text-sm text-gray-500 mb-4" id="qrStatus">QR kod oluşturuluyor...</p>
       <div id="qrcode" class="p-4 bg-white border rounded min-w-[256px] min-h-[256px]"></div>
+      <p id="qrHelp" class="hidden mt-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 max-w-[280px] text-center">
+        QR kodu gelmiyor mu? Eski/bozuk bir oturum dosyası QR ekranını engelleyebilir:
+        başlıktaki <b>Çıkış</b> ile oturumu silip tekrar <b>WhatsApp Bağla</b>'ya basın.
+      </p>
       <button id="closeQrBtn" class="mt-4 text-sm text-gray-500 hover:text-gray-800">İptal</button>
     </div>
   </div>
@@ -602,7 +606,7 @@
     // --- Çıkış (yerel oturumu sil) ---
     $('waLogoutBtn').onclick = async () => {
       const ok = confirm(
-        "WhatsApp oturumu bu bilgisayardan silinecek.\n" +
+        "WhatsApp oturumu bu bilgisayardan SİLİNECEK (bozuk oturumları da temizler).\n" +
         "Bir sonraki bağlantıda QR kodu tekrar okutman gerekecek.\n\n" +
         "Telefondaki 'Bağlı cihazlar' listesinden de kaldırmak için:\n" +
         "WhatsApp > Bağlı cihazlar > bu cihaz > Çıkış yap\n\n" +
@@ -841,10 +845,12 @@
 
     function applyStatus(st) {
       const btn = $('waConnectBtn');
-      // Bağlıyken/değilken "Kes" ve "Çıkış" yalnızca bir oturum varken görünür
+      // "Kes" yalnızca canlı oturumda anlamlı; "Çıkış" ise HER ZAMAN görünür:
+      // eski/bozuk oturum ancak onunla temizlenebiliyor, yoksa QR ekranına hiç
+      // düşülmüyor (sahada "bağlanamıyorum" olarak görülen durum buydu).
       const hasSession = st !== 'offline';
       $('waDisconnectBtn').classList.toggle('hidden', !hasSession);
-      $('waLogoutBtn').classList.toggle('hidden', !hasSession);
+      $('waLogoutBtn').classList.remove('hidden');
       if (st === 'connected') {
         btn.textContent = 'Bağlı (Hazır)';
         btn.disabled = true;
@@ -861,14 +867,27 @@
       }
     }
 
+    // QR penceresi açıldıktan sonra QR gelmezse ne yapılacağını söyle.
+    let qrWatchdog = null;
+    function stopQrWatchdog() {
+      clearTimeout(qrWatchdog);
+      qrWatchdog = null;
+    }
+
     $('waConnectBtn').onclick = async () => {
       $('qrModal').classList.replace('hidden', 'flex');
       $('qrStatus').textContent = 'QR kod bekleniyor... (Birkaç saniye sürebilir)';
       $('qrcode').innerHTML = '';
+      $('qrHelp').classList.add('hidden');
+      stopQrWatchdog();
+      qrWatchdog = setTimeout(() => $('qrHelp').classList.remove('hidden'), 12000);
       try {
         await invoke('connect_whatsapp');
       } catch (err) {
-        $('qrStatus').textContent = 'Bağlantı hatası: ' + err;
+        // Ör. "zaten bağlı": QR hiç gelmeyeceği için sebebi açıkça göster.
+        $('qrStatus').textContent = String(err);
+        $('qrHelp').classList.remove('hidden');
+        stopQrWatchdog();
       }
     };
 
@@ -881,6 +900,8 @@
     });
 
     listen('qr_code', (event) => {
+      stopQrWatchdog();
+      $('qrHelp').classList.add('hidden');
       $('qrStatus').textContent = 'QR kodu telefonunuzdan okutun';
       $('qrcode').innerHTML = '';
       if (typeof QRCode === 'undefined') {
@@ -895,8 +916,13 @@
     });
 
     listen('whatsapp_ready', () => {
+      stopQrWatchdog();
       $('qrModal').classList.replace('flex', 'hidden');
       applyStatus('connected');
+      // Eski "Bağlantı kapandı." yazısı ekranda kalıp kafa karıştırmasın.
+      const s = $('sendStatus');
+      s.classList.remove('hidden');
+      s.textContent = 'WhatsApp bağlı: mesaj gönderebilirsiniz.';
     });
 
     listen('whatsapp_disconnected', (event) => {
@@ -917,6 +943,24 @@
       $('qrModal').classList.replace('flex', 'hidden');
       alert("WhatsApp hatası: " + event.payload);
     });
+
+    // Durum her 5 saniyede tazelenir: olaylar kaçsa ya da wa-rs kendi içinde
+    // yeniden bağlansa bile arayüz gerçeği gösterir (eskiden "Bağlı (Hazır)" ile
+    // "Bağlantı kapandı." aynı anda görünebiliyordu).
+    let lastStatus = null;
+    setInterval(async () => {
+      try {
+        const st = await invoke('get_wa_status');
+        if (st === lastStatus) return;
+        lastStatus = st;
+        applyStatus(st);
+        if (st === 'connected') {
+          const s = $('sendStatus');
+          s.classList.remove('hidden');
+          s.textContent = 'WhatsApp bağlı: mesaj gönderebilirsiniz.';
+        }
+      } catch (_) { /* sunucu kapalıysa sessizce geç */ }
+    }, 5000);
 
     // Startup
     loadData().then(async () => {

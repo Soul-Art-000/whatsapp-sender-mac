@@ -92,6 +92,19 @@ Sandbox'ta `gh` yoksa: `apt-get install -y gh`. Jeton yoksa cihaz girişi kullan
 - **iCloud vCard'ları `item1.TEL;type=pref:` biçiminde gruplar**; satır başına
   `TEL` aramak numaraların yarısını kaybettirir. Katlanmış satırları da aç.
 - **Ölü CDN**: `cdn.rawgit.com` kapalı. QR kütüphanesi jsDelivr'den geliyor.
+- **wa-rs kendi içinde yeniden bağlanır**: `Disconnected` → `Connected` döngüsü
+  arayüzde "Bağlı (Hazır)" ↔ "WhatsApp Bağla" zıplaması olarak görünür (kullanıcı
+  bunu "bağlantı sorunu" diye bildirdi). Bu yüzden arayüz 5 saniyede bir
+  `get_wa_status` ile tazelenir; olayları tek başına gerçek kaynak saymayın.
+- **QR olayı kaçabilir**: bağlantı, arayüz hazır olmadan QR üretirse olay kaybolur.
+  `AppState.last_qr` son QR'ı saklar, `connect_whatsapp` önce onu yayınlar
+  (sunucu modundaki `last_qr` ile aynı davranış).
+- **Boş QR kutusu genelde "eski oturum" demektir**: bağlıyken "WhatsApp Bağla" QR
+  üretmez, pencere sonsuza kadar "Bağlanıyor..."da kalırdı. Artık zaten bağlıysa
+  komut açık hata verir ve arayüz "Çıkış"ı her zaman gösterir (bozuk oturum ancak
+  böyle temizlenir).
+- **Günlük**: veri klasöründeki `app.log` (1 MB'da `app.log.1`). Bağlantı
+  şikâyetlerinde ilk bakılacak yer; `log_line` + `fmt_utc` birim testli.
 - **Tauri v1 allowlist'i derleme zamanında gömülür** (`tauri-codegen` →
   `#[module_command_handler]`). Arayüz yalnızca `invoke` (özel komut, allowlist
   istemez), `dialog.open` ve `event.listen` kullanır; `event`ın v1'de allowlist

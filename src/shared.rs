@@ -28,6 +28,9 @@ pub struct AppState {
     /// Şu anda bir toplu gönderim (elle ya da zamanlanmış) sürüyor mu.
     /// İki gönderimin aynı anda WhatsApp istemcisini kullanmasını engeller.
     pub busy: Arc<AtomicBool>,
+    /// En son üretilen QR kodu. Arayüz açılmadan/bağlanmadan önce üretilirse
+    /// kaybolmasın diye saklanır (sunucu modunda zaten böyleydi).
+    pub last_qr: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -38,6 +41,7 @@ impl AppState {
             stop: Arc::new(AtomicBool::new(false)),
             connecting: Arc::new(AtomicBool::new(false)),
             busy: Arc::new(AtomicBool::new(false)),
+            last_qr: Mutex::new(None),
         }
     }
 }
@@ -282,6 +286,50 @@ fn next_rand() -> u64 {
     x ^= x >> 27;
     RNG_STATE.store(x, Ordering::Relaxed);
     x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+}
+
+/// Bağlantı sorunlarını teşhis için uygulama günlüğü.
+///
+/// Masaüstü uygulamasında pencere konsolu yok; olaylar buraya yazılır:
+/// `<veri klasörü>/app.log`. 1 MB'ı aşınca `app.log.1` olarak devredilir.
+pub fn log_line(app_dir: &Path, msg: &str) {
+    let path = app_dir.join("app.log");
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > 1_000_000)
+        .unwrap_or(false)
+    {
+        let _ = std::fs::rename(&path, app_dir.join("app.log.1"));
+    }
+    let line = format!("{} {}\n", fmt_utc(now_unix()), msg);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// UNIX saniyesini okunabilir UTC damgasına çevirir: `2026-10-14 15:42:07`.
+///
+/// Tarih kütüphanesi (chrono) bağımlılığı eklememek için civil-from-days
+/// algoritması kullanılır (Howard Hinnant).
+pub fn fmt_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, h, m, s)
 }
 
 /// Sabit zamanlı token karşılaştırması.
@@ -1811,5 +1859,30 @@ mod tests {
         assert!(!token_eq("abcd1234", "abcd1235"));
         assert!(!token_eq("abcd", "abcd1234"), "farklı uzunluk eşleşmemeli");
         assert!(token_eq("", ""));
+    }
+    #[test]
+    fn zaman_damgasi_dogru_bicimlenir() {
+        assert_eq!(fmt_utc(0), "1970-01-01 00:00:00");
+        assert_eq!(fmt_utc(1_000_000_000), "2001-09-09 01:46:40");
+        // 2026-10-14 15:42:07 UTC
+        assert_eq!(fmt_utc(1_792_002_127), "2026-10-14 18:22:07");
+    }
+
+    #[test]
+    fn gunluk_dosyasi_yazilir_ve_buyuyunce_devredilir() {
+        let (dir, _db) = gecici_db();
+        log_line(&dir, "deneme");
+        let icerik = std::fs::read_to_string(dir.join("app.log")).expect("günlük yazılmalı");
+        assert!(icerik.contains("deneme"), "mesaj günlüğe girmeli: {icerik}");
+        assert!(icerik.len() > 20, "zaman damgası da yazılmalı");
+
+        // 1 MB sınırı aşılınca app.log.1'e devredilir.
+        std::fs::write(dir.join("app.log"), "x".repeat(1_000_001)).unwrap();
+        log_line(&dir, "yeni");
+        assert!(dir.join("app.log.1").exists(), "eski günlük devredilmeli");
+        assert!(std::fs::read_to_string(dir.join("app.log"))
+            .unwrap()
+            .contains("yeni"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -56,7 +56,34 @@ fn import_contacts_from_file(path: String, state: State<AppState>) -> Result<Imp
 
 #[command]
 async fn connect_whatsapp(app_handle: AppHandle) -> Result<(), String> {
-    spawn_connect(app_handle);
+    // Zaten bağlıysa sessizce hiçbir şey yapmıyordu: arayüz "QR bekleniyor"da
+    // kalıyordu. Şimdi ya eldeki QR gösterilir ya da durum açıkça söylenir.
+    let (client_ok, qr) = {
+        let state = app_handle.state::<AppState>();
+        let c = state.client.lock().unwrap().clone();
+        let logged_in = c
+            .as_ref()
+            .map(|c| c.is_connected() && c.is_logged_in())
+            .unwrap_or(false);
+        let qr = state.last_qr.lock().unwrap().clone();
+        (logged_in, qr)
+    };
+
+    if client_ok {
+        return Err(
+            "WhatsApp zaten bağlı. Başka bir cihaz/numara bağlamak için önce 'Çıkış' ile \
+             oturumu silin, sonra 'WhatsApp Bağla'ya basın."
+                .to_string(),
+        );
+    }
+
+    match qr {
+        Some(code) => {
+            shared::log_line(&data_dir(&app_handle), "bekleyen QR tekrar gösterildi");
+            let _ = app_handle.emit_all("qr_code", serde_json::Value::String(code));
+        }
+        None => spawn_connect(app_handle),
+    }
     Ok(())
 }
 
@@ -80,7 +107,9 @@ async fn disconnect_whatsapp(state: State<'_, AppState>) -> Result<(), String> {
 async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
     let dir = data_dir(&app_handle);
     let state = app_handle.state::<AppState>();
+    shared::log_line(&dir, "çıkış: oturum siliniyor");
     shared::logout_session(&state, &dir).await?;
+    *state.last_qr.lock().unwrap() = None;
     let _ = app_handle.emit_all("whatsapp_logged_out", ());
     Ok(())
 }
@@ -101,7 +130,23 @@ fn spawn_connect(app_handle: AppHandle) {
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let emit_handle = handle.clone();
+        // `last_qr`: QR arayüz açılmadan önce üretilirse kaybolmasın diye
+        // saklanır (sunucu modunda da böyle). Günlük: teşhis için app.log.
         let emit = move |name: &str, payload: serde_json::Value| {
+            let dir = data_dir(&emit_handle);
+            match name {
+                "qr_code" => {
+                    if let Some(code) = payload.as_str() {
+                        *emit_handle.state::<AppState>().last_qr.lock().unwrap() =
+                            Some(code.to_string());
+                    }
+                }
+                "whatsapp_ready" | "whatsapp_logged_out" => {
+                    *emit_handle.state::<AppState>().last_qr.lock().unwrap() = None;
+                }
+                _ => {}
+            }
+            shared::log_line(&dir, &format!("olay {} {}", name, payload));
             let _ = emit_handle.emit_all(name, payload);
         };
         let client_handle = handle.clone();
@@ -109,11 +154,15 @@ fn spawn_connect(app_handle: AppHandle) {
             *client_handle.state::<AppState>().client.lock().unwrap() = Some(client);
         };
 
-        if let Err(e) = shared::run_bot(&data_dir(&handle), emit, on_client).await {
+        let dir = data_dir(&handle);
+        shared::log_line(&dir, "bağlantı başlatıldı");
+        if let Err(e) = shared::run_bot(&dir, emit, on_client).await {
+            shared::log_line(&dir, &format!("bağlantı hatası: {}", e));
             let _ = handle.emit_all("whatsapp_error", e);
         }
         connecting.store(false, Ordering::SeqCst);
         *handle.state::<AppState>().client.lock().unwrap() = None;
+        shared::log_line(&dir, "bağlantı kapandı");
         let _ = handle.emit_all("whatsapp_disconnected", "Bağlantı kapandı.".to_string());
     });
 }

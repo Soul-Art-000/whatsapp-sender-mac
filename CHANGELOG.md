@@ -3,6 +3,26 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.2] - 2026-10-14
+
+### Fixed
+- **"WhatsApp Bağla" bağlıyken hiçbir şey yapmıyordu**: komut sessizce dönüyor,
+  pencere "Bağlanıyor..." ve boş QR kutusuyla kalıyordu. Artık zaten bağlıysa
+  sebebi açıkça söyleniyor ("önce Çıkış ile oturumu silin"), bağlantı sürerken
+  üretilmiş bir QR varsa tekrar gösteriliyor (`last_qr`, sunucu modundaki gibi).
+- **"Çıkış" düğmesi çevrimdışıyken gizleniyordu**: eski/bozuk oturum dosyası
+  olduğunda kullanıcının QR ekranına düşmesinin hiçbir yolu kalmıyordu. Artık
+  "Çıkış" her zaman görünür ("Kes" yalnızca canlı oturumda).
+- **Durum göstergesi gerçeği söylüyor**: arayüz 5 saniyede bir bağlantı durumunu
+  tazeliyor ve `whatsapp_ready` geldiğinde eski "Bağlantı kapandı." yazısı
+  temizleniyor (eskiden "Bağlı (Hazır)" ile bu yazı aynı anda görünebiliyordu).
+- QR penceresi 12 saniye içinde QR gelmezse ne yapılacağını söylüyor.
+
+### Added
+- **Uygulama günlüğü**: her olay ve bağlantı adımı
+  `~/Library/Application Support/com.whatsapp.sender/app.log` dosyasına yazılıyor
+  (1 MB'da `app.log.1`'e devredilir). Bağlantı sorunlarını uzaktan teşhis etmek için.
+
 ## [0.5.1] - 2026-10-14
 
 ### Güvenlik
