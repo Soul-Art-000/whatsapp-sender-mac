@@ -14,7 +14,10 @@ on:
       - 'Cargo.lock'
       - 'build.rs'
       - 'tauri.conf.json'
-      - '.github/workflows/**'
+      # Not: '.github/workflows/**' bilinçli olarak YOK. Yalnızca workflow
+      # dosyası değişince masaüstü uygulaması yeniden derlenip aynı sürümün
+      # yayınını tekrar deniyordu (asset adı çakışması + boşa CI). Workflow
+      # değişikliğini denemek için elle `workflow_dispatch` var.
   workflow_dispatch:
 
 # Sürümü yayınlayabilmek için yazma izni gerekli
