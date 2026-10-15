@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WA Toplu Gönderici</string>
+    <string name="pick_contacts">Rehberden Kişi Seç</string>
+    <string name="accessibility_label">WA Toplu Gönderici</string>
+    <string name="accessibility_description">WhatsApp sohbetinde gönder düğmesine basmak için kullanılır. Yalnızca mesaj gönderirken etkindir.</string>
+    <string name="notif_channel">Gönderim</string>
+    <string name="notif_title">Toplu mesaj gönderiliyor</string>
+</resources>

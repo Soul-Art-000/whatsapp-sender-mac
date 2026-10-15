@@ -18,6 +18,16 @@ Bu proje, **Tauri (Rust)** ve **Vanilla JS** kullanılarak geliştirilmiş, ultr
 - **Durdurma ve İlerleme:** Gönderim sırasında ilerleme çubuğu ve kalan kişi bilgisi görünür; **Durdur** bekleme sırasında bile anında keser.
 - **Hata Toleransı ve Devam Etme:** Geçici hatada 3 kez denenir, kalıcı hatada kalanlara devam edilir. Biten işlemde kaç kişiye gittiği, kaç kişide hata olduğu ve kaç numaranın atlandığı bildirilir. İşlem **Durdur** ile kesilse ya da bağlantı geri gelmese bile kalan kişiler kaydedilir; **Kalanları gönder** ile sadece onlar gönderilir.
 
+## 📱 Android sürümü (telefonda çalışır)
+
+Ayrıca telefonda çalışan, sunucu gerektirmeyen bir sürüm var: `android/` klasörü ve
+Releases'taki **android-v0.1.0** (`app-debug.apk`). WhatsApp Web protokolü yerine
+telefonun kendi WhatsApp'ını erişilebilirlik servisiyle otomatik kullanır — aynı
+telefon kendini "bağlı cihaz" olarak ekleyemediği için (QR'ı kendi kamerasıyla
+okutması gerekirdi) protokol yolu burada mümkün değil. Rehberden çoklu kişi seçimi,
+`/isim`, rastgele bekleme ve durdurma vardır. Kurulum ve uyarılar:
+[`android/README.md`](android/README.md).
+
 ## 🔐 Güvenlik
 
 - Uygulama **yerel** çalışır: kişiler ve WhatsApp oturumu yalnızca bu bilgisayarda

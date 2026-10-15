@@ -1,0 +1,36 @@
+// AndroidX bilinçli olarak YOK: uygulama yalnızca platform API'lerini kullanır
+// (Activity, ListView, AccessibilityService, NotificationChannel). Böylece
+// derleme bağımlılığı az, APK küçük ve kırılganlık düşük.
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.salihbayrak.wabulk'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.salihbayrak.wabulk"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Kişisel kullanım: imzalama için CI'da debug anahtarı kullanılır.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies { }

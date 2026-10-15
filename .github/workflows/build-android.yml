@@ -1,0 +1,64 @@
+name: Build Android APK
+
+# Telefonda çalışan sürüm: WhatsApp Web protokolü yerine telefonun KENDİ
+# WhatsApp uygulamasını erişilebilirlik servisiyle otomatik kullanır
+# (aynı telefon kendini "bağlı cihaz" olarak ekleyemez — QR'ı kendi
+# kamerasıyla okutması gerekirdi).
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: APK derle (debug imzalı, sideload için)
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+
+      - name: Sürüm oku
+        id: ver
+        run: |
+          V=$(grep -oP 'versionName "\K[^"]+' android/app/build.gradle)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          echo "sürüm: $V"
+
+      - name: APK artefaktı
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Yayınla (android-v<sürüm>)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          ls -la "$APK"
+          TAG="android-v${{ steps.ver.outputs.v }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Android APK v${{ steps.ver.outputs.v }}" --notes \
+              "Telefonda çalışan toplu mesaj gönderici (sideload). Kurulum: APK'yı indir, \"bilinmeyen kaynaklara izin ver\" diyerek kur, uygulamada erişilebilirlik + rehber izinlerini ver."
+          fi
+          gh release upload "$TAG" "$APK" --clobber

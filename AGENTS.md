@@ -163,6 +163,23 @@ Tauri katmanı Linux'ta derlenemediği için arayüz değişikliklerini şöyle 
    listeyi boşaltıyor mu" akışı uçtan uca doğrulanır; ağır DOM (querySelectorAll gibi)
    desteklenmediği için yalnızca kişi listesi render'ı hata verir, bu beklenen gürültüdür.
 
+## Android sürümü (`android/`, Kotlin)
+
+- **Neden protokol değil:** WhatsApp birincil telefonun kendisini bağlı cihaz
+  olarak eklemez; bağlama, birincil telefonun kamerasıyla QR okutmayı gerektirir.
+  Aynı telefonda "bağımsız gönderim" = telefonun kendi WhatsApp'ını
+  **erişilebilirlik servisiyle otomatik kullanmak** (WA Bulk Pro vb. de böyle yapar).
+- Masaüstündeki Rust/wa-rs çekirdeği burada kullanılmaz; Kotlin + platform API'leri
+  (AndroidX **yok**, üçüncü parti bağımlılık yok, coroutine yok).
+- Manifest izinleri: READ_CONTACTS, POST_NOTIFICATIONS, FOREGROUND_SERVICE(+DATA_SYNC),
+  **SYSTEM_ALERT_WINDOW** (Android 10+ arka plandan WhatsApp'ı açabilmek için; erişilebilirlik
+  servisi zaten bağlı olduğundan çoğu durumda gerekmez ama garanti için istenir).
+- Gönderim döngüsü **ön plan servisinde** (WhatsApp öne gelirken süreç ölmesin).
+- APK CI'da `assembleDebug` ile üretilir (debug anahtarıyla imzalı, sideload);
+  ayrı bir sürüm etiketi kullanılır: `android-v<versionName>`.
+- Gradle wrapper dosyası bilinçli olarak repoda yok (binary jar eklememek için);
+  CI `gradle/actions/setup-gradle` ile Gradle 8.9 kurar.
+
 ## Ortam notları (sandbox)
 
 - `terminal` bir Linux konteynerinde çalışır; `/workspace` = Mac'te
