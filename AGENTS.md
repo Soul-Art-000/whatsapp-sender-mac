@@ -180,6 +180,21 @@ Tauri katmanı Linux'ta derlenemediği için arayüz değişikliklerini şöyle 
 - Gradle wrapper dosyası bilinçli olarak repoda yok (binary jar eklememek için);
   CI `gradle/actions/setup-gradle` ile Gradle 8.9 kurar.
 
+## GitHub Pages yayını — tuzak
+
+Başarısız bir Pages koşusunu **`gh run rerun` ile tekrar denemeyin**: her deneme
+aynı koşuya yeni bir `github-pages` artefaktı ekler ve `actions/deploy-pages`
+`Multiple artifacts named "github-pages" were unexpectedly found` hatasıyla
+(deterministik olarak) düşer. Yapılacak şey yeni bir koşu başlatmaktır:
+
+```bash
+gh workflow run pages.yml      # workflow_dispatch var
+```
+
+Sahada yaşandı: bir koşu 5 denemeye çıktı, 3 artefakt birikti, yayın 1 sürüm
+geride kaldı; temiz koşu ile düzeldi. Takılı bir deployment kalırsa:
+`gh api -X POST repos/<owner>/<repo>/pages/deployments/<id>/cancel`.
+
 ## Ortam notları (sandbox)
 
 - `terminal` bir Linux konteynerinde çalışır; `/workspace` = Mac'te
