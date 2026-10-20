@@ -3,6 +3,15 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.5] - 2026-10-20
+
+### Added
+- **Tek görüntülük (view once) resim gönderimi.** Gönderim ve zamanlama
+  panelinde "Resimleri tek görüntülük gönder" onay kutusu eklendi; işaretliyse
+  eklenen görseller `viewOnce` bayrağıyla gider (alıcı yalnızca bir kez açar).
+  Zamanlanmış işlerde tercih `scheduled.view_once` kolonunda saklanır (eski
+  veritabanları açılışta otomatik güncellenir). Belgeler bu bayrağı taşımaz.
+
 ## [0.5.4] - 2026-10-20
 
 ### Fixed

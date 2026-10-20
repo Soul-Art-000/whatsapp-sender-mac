@@ -198,6 +198,7 @@ async fn send_whatsapp_messages(
     message: String,
     attachment_paths: Vec<String>,
     validate: bool,
+    #[allow(clippy::too_many_arguments)] view_once: Option<bool>,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<SendSummary, String> {
@@ -228,6 +229,7 @@ async fn send_whatsapp_messages(
         &message,
         &attachment_paths,
         validate,
+        view_once.unwrap_or(false),
         &stop,
         emit,
     )
@@ -254,6 +256,7 @@ fn schedule_messages(
     attachment_paths: Vec<String>,
     send_at: u64,
     validate: bool,
+    view_once: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
     shared::add_scheduled(
@@ -263,6 +266,7 @@ fn schedule_messages(
         &attachment_paths,
         &contacts,
         validate,
+        view_once.unwrap_or(false),
     )
 }
 

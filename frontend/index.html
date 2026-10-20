@@ -131,6 +131,11 @@
           <span>Göndermeden önce numaraları doğrula<br><span class="text-gray-400">WhatsApp'ta kayıtlı olmayanlar atlanır (önerilir)</span></span>
         </label>
 
+        <label class="flex items-start gap-2 mt-2 text-xs text-gray-600 select-none cursor-pointer">
+          <input type="checkbox" id="viewOnceCheck" class="mt-0.5 rounded border-gray-300 w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+          <span>Resimleri tek görüntülük gönder<br><span class="text-gray-400">Alıcı yalnızca bir kez açabilir (ekrandaki ekler)</span></span>
+        </label>
+
         <button id="stopBtn" class="button-spring w-full mt-2 bg-red-50 text-red-600 border border-red-200 font-medium py-2 rounded-lg hover:bg-red-100 hidden">
           Durdur
         </button>
@@ -424,6 +429,7 @@
           message: msg,
           attachmentPaths: [...attachments],
           validate: $('validateCheck').checked,
+          viewOnce: $('viewOnceCheck').checked,
           sendAt
         });
         await loadScheduled();
@@ -797,7 +803,8 @@
           contacts: list,
           message: msg,
           attachmentPaths: [...attachments],
-          validate: $('validateCheck').checked
+          validate: $('validateCheck').checked,
+          viewOnce: $('viewOnceCheck').checked
         });
         setProgress(list.length, list.length);
 

@@ -63,6 +63,9 @@ struct SendArgs {
     attachment_paths: Vec<String>,
     #[serde(default)]
     validate: bool,
+    /// Görseller tek görüntülük (view once) gönderilsin.
+    #[serde(default)]
+    view_once: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +77,9 @@ struct ScheduleArgs {
     attachment_paths: Vec<String>,
     #[serde(default = "default_true")]
     validate: bool,
+    /// Görseller tek görüntülük (view once) gönderilsin.
+    #[serde(default)]
+    view_once: Option<bool>,
     send_at: u64,
 }
 
@@ -201,6 +207,7 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
                 &a.attachment_paths,
                 &a.contacts,
                 a.validate,
+                a.view_once.unwrap_or(false),
             )?;
             Ok(json!(id))
         }
@@ -282,6 +289,7 @@ async fn send(srv: &Server, args: SendArgs) -> Result<Value, String> {
         &args.message,
         &args.attachment_paths,
         args.validate,
+        args.view_once.unwrap_or(false),
         &stop,
         emit,
     )

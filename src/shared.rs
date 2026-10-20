@@ -508,6 +508,7 @@ pub fn build_messages(
     message: &str,
     contact_name: &str,
     uploads: &[Uploaded],
+    view_once: bool,
 ) -> Vec<wa_rs::wa_rs_proto::whatsapp::Message> {
     if uploads.is_empty() {
         return vec![build_text_message(message, contact_name)];
@@ -519,7 +520,7 @@ pub fn build_messages(
             let caption = if idx == 0 { message } else { "" };
             match up.kind {
                 MediaKind::Image => {
-                    build_image_message(caption, contact_name, up.mime, up.up.clone())
+                    build_image_message(caption, contact_name, up.mime, up.up.clone(), view_once)
                 }
                 MediaKind::Document => build_document_message(caption, contact_name, up),
             }
@@ -587,6 +588,7 @@ pub async fn send_batch<F: Fn(String) + Send>(
     message: &str,
     attachment_paths: &[String],
     validate: bool,
+    view_once: bool,
     stop: &AtomicBool,
     emit: F,
 ) -> Result<SendSummary, String> {
@@ -688,7 +690,7 @@ pub async fn send_batch<F: Fn(String) + Send>(
         ));
 
         // İlk ek mesaj metniyle birlikte, kalanlar ayrı mesaj olarak gider.
-        let msgs = build_messages(message, &contact.name, &uploads);
+        let msgs = build_messages(message, &contact.name, &uploads, view_once);
 
         let jid_str = format!("{}@s.whatsapp.net", contact.phone);
         let jid = match jid_str.parse::<wa_rs::Jid>() {
@@ -818,6 +820,7 @@ where
             &job.message,
             &job.attachments,
             job.validate,
+            job.view_once,
             &state.stop,
             batch_emit,
         )
@@ -917,6 +920,7 @@ pub fn build_image_message(
     contact_name: &str,
     mime: &str,
     up: wa_rs::upload::UploadResponse,
+    view_once: bool,
 ) -> wa_rs::wa_rs_proto::whatsapp::Message {
     wa_rs::wa_rs_proto::whatsapp::Message {
         image_message: Some(Box::new(
@@ -933,6 +937,7 @@ pub fn build_image_message(
                 media_key: Some(up.media_key),
                 file_enc_sha256: Some(up.file_enc_sha256),
                 direct_path: Some(up.direct_path),
+                view_once: if view_once { Some(true) } else { None },
                 ..Default::default()
             },
         )),
@@ -1040,6 +1045,7 @@ pub fn init_db(app_dir: &std::path::Path) -> Result<Connection, String> {
             attachments TEXT NOT NULL DEFAULT '[]',
             contacts TEXT NOT NULL DEFAULT '[]',
             validate INTEGER NOT NULL DEFAULT 1,
+            view_once INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
             detail TEXT NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL
@@ -1047,6 +1053,11 @@ pub fn init_db(app_dir: &std::path::Path) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+    // Eski kurulum: kolon sonradan eklendi (varsa hata yok sayılır).
+    let _ = db.execute(
+        "ALTER TABLE scheduled ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(db)
 }
 // ------------------------------------------------------- komut çekirdekleri
@@ -1198,6 +1209,8 @@ pub struct ScheduledJob {
     pub attachments: Vec<String>,
     pub contacts: Vec<Contact>,
     pub validate: bool,
+    /// Görseller tek görüntülük (view once) gönderilsin mi.
+    pub view_once: bool,
     /// pending | sending | sent | failed | missed
     pub status: String,
     /// İnsan okuyabilir sonuç: "12/12 gönderildi" gibi.
@@ -1221,6 +1234,7 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledJob> {
         attachments: serde_json::from_str(&attachments).unwrap_or_default(),
         contacts: serde_json::from_str(&contacts).unwrap_or_default(),
         validate: row.get(5)?,
+        view_once: row.get::<_, i64>(9)? != 0,
         status: row.get(6)?,
         detail: row.get(7)?,
         created_at: row.get::<_, i64>(8)? as u64,
@@ -1235,6 +1249,7 @@ pub fn add_scheduled(
     attachments: &[String],
     contacts: &[Contact],
     validate: bool,
+    view_once: bool,
 ) -> Result<i64, String> {
     if contacts.is_empty() {
         return Err("Zamanlanacak kişi seçilmedi.".to_string());
@@ -1250,14 +1265,15 @@ pub fn add_scheduled(
     let contacts =
         serde_json::to_string(contacts).map_err(|e| format!("Kişiler yazılamadı: {}", e))?;
     db.execute(
-        "INSERT INTO scheduled (send_at, message, attachments, contacts, validate, status, detail, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', '', ?6)",
+        "INSERT INTO scheduled (send_at, message, attachments, contacts, validate, view_once, status, detail, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', '', ?7)",
         params![
             send_at as i64,
             message,
             attachments,
             contacts,
             validate,
+            view_once,
             now_unix() as i64
         ],
     )
@@ -1269,7 +1285,7 @@ pub fn add_scheduled(
 pub fn list_scheduled(db: &Connection) -> Result<Vec<ScheduledJob>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at
+            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at, view_once
              FROM scheduled
              ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END ASC,
                       CASE WHEN status = 'pending' THEN send_at ELSE -send_at END ASC
@@ -1340,7 +1356,7 @@ pub fn take_due_scheduled(db: &Connection, now: u64) -> Result<Vec<ScheduledJob>
 
     let mut stmt = db
         .prepare(
-            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at
+            "SELECT id, send_at, message, attachments, contacts, validate, status, detail, created_at, view_once
              FROM scheduled WHERE status = 'pending' AND send_at <= ?1 ORDER BY send_at ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -1680,7 +1696,7 @@ mod tests {
             ek("rapor.pdf", "application/pdf", MediaKind::Document),
             ek("arsiv.zip", "application/zip", MediaKind::Document),
         ];
-        let msgs = build_messages("Merhaba /isim", "Ayşe", &ekler);
+        let msgs = build_messages("Merhaba /isim", "Ayşe", &ekler, false);
         assert_eq!(msgs.len(), 3);
         let img = msgs[0].image_message.as_ref().expect("ilk ek resim");
         assert_eq!(img.caption.as_deref(), Some("Merhaba Ayşe"));
@@ -1694,7 +1710,7 @@ mod tests {
     #[test]
     fn ilk_ek_belge_ise_metin_ona_altyazi_olur() {
         let ekler = vec![ek("rapor.pdf", "application/pdf", MediaKind::Document)];
-        let msgs = build_messages("Ektedir /isim", "Ali", &ekler);
+        let msgs = build_messages("Ektedir /isim", "Ali", &ekler, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(
             msgs[0]
@@ -1709,7 +1725,7 @@ mod tests {
 
     #[test]
     fn eksiz_mesaj_metin_mesaji_olarak_kalir() {
-        let msgs = build_messages("Selam /isim", "Zeynep", &[]);
+        let msgs = build_messages("Selam /isim", "Zeynep", &[], false);
         assert_eq!(msgs.len(), 1);
         assert!(msgs[0].document_message.is_none());
         assert_eq!(
@@ -1754,6 +1770,7 @@ mod tests {
             &ekler,
             &[kisi("905551112233")],
             true,
+            false,
         )
         .expect("kuyruğa yazılmalı");
         assert!(id > 0);
@@ -1769,12 +1786,30 @@ mod tests {
     }
 
     #[test]
+    fn tek_goruntuluk_resim_view_once_ile_kurulur() {
+        let ekler = vec![ek("foto.jpg", "image/jpeg", MediaKind::Image)];
+        let normal = build_messages("", "Ali", &ekler, false);
+        assert_eq!(
+            normal[0].image_message.as_ref().unwrap().view_once,
+            None,
+            "normal gönderimde bayrak olmamalı"
+        );
+
+        let tek = build_messages("", "Ali", &ekler, true);
+        assert_eq!(
+            tek[0].image_message.as_ref().unwrap().view_once,
+            Some(true),
+            "tek görüntülük bayrağı kurulmalı"
+        );
+    }
+
+    #[test]
     fn gecmis_saat_ve_bos_is_reddedilir() {
         let (dir, db) = gecici_db();
         let kisiler = vec![kisi("905551112233")];
-        assert!(add_scheduled(&db, now_unix() - 60, "x", &[], &kisiler, true).is_err());
-        assert!(add_scheduled(&db, now_unix() + 60, "x", &[], &[], true).is_err());
-        assert!(add_scheduled(&db, now_unix() + 60, "  ", &[], &kisiler, true).is_err());
+        assert!(add_scheduled(&db, now_unix() - 60, "x", &[], &kisiler, true, false).is_err());
+        assert!(add_scheduled(&db, now_unix() + 60, "x", &[], &[], true, false).is_err());
+        assert!(add_scheduled(&db, now_unix() + 60, "  ", &[], &kisiler, true, false).is_err());
         assert!(list_scheduled(&db).expect("liste").is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1789,6 +1824,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             true,
+            false,
         )
         .unwrap();
 
@@ -1829,6 +1865,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             false,
+            false,
         )
         .unwrap();
         assert_eq!(take_due_scheduled(&db, now_unix() + 20).unwrap().len(), 1);
@@ -1849,6 +1886,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             true,
+            false,
         )
         .unwrap();
         let gec = now_unix() + SCHEDULE_MISSED_GRACE_SECS + 60;
@@ -1883,6 +1921,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             true,
+            false,
         )
         .unwrap();
         cancel_scheduled(&db, id).expect("bekleyen iş iptal edilmeli");
@@ -1900,6 +1939,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             true,
+            false,
         )
         .unwrap();
         finish_scheduled(&db, id2, "sent", "1/1 gönderildi").unwrap();
@@ -1913,6 +1953,7 @@ mod tests {
             &[],
             &[kisi("905551112233")],
             true,
+            false,
         )
         .unwrap();
         assert_eq!(clear_finished_scheduled(&db).unwrap(), 1);
