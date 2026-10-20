@@ -1446,7 +1446,10 @@ where
 
     on_client(bot.client());
     // `run()` yeni bir görev açar; onu öldürebilmek için handle'ı dışarı ver.
-    let wa_handle = bot.run().await.map_err(|e| format!("WhatsApp bağlantısı kurulamadı: {}", e))?;
+    let wa_handle = bot
+        .run()
+        .await
+        .map_err(|e| format!("WhatsApp bağlantısı kurulamadı: {}", e))?;
     // Çalışma süresi handle'ı dışarı verilir: "Kes"/"Çıkış" bu handle'ı abort
     // eder. `bot` düşürülse bile süren `run()` döngüsü kendiliğinden ölmez ve
     // oturum yeniden bağlanırdı; çıkış bu yüzden etkisiz kalıyordu.
