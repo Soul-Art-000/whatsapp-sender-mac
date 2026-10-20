@@ -986,7 +986,7 @@ pub fn map_event(event: &Event) -> Option<(&'static str, String)> {
             "Bağlantı koptu, yeniden bağlanılıyor...".to_string(),
         )),
         Event::LoggedOut(_) => Some((
-            "whatsapp_error",
+            "whatsapp_logged_out",
             "Oturum kapatıldı. Lütfen QR kodu tekrar okutun.".to_string(),
         )),
         Event::TemporaryBan(b) => Some((
@@ -1536,12 +1536,35 @@ pub async fn wait_client_stopped(state: &AppState) {
 /// kaldıran bir API sunmuyor: bağlantı kesilir ve yerel oturum dosyaları silinir,
 /// böylece bir sonraki bağlantıda QR yeniden okutulur. Telefondaki "Bağlı
 /// cihazlar" kaydını kullanıcı kaldırır.
+///
+/// Dosya silinemezse (başka kopya/DB kilidi, izin, TCC) çıkış sessizce yarım
+/// kalmamalı: oturum geçersiz sayılıp boş bir kopyayla değiştirilir. Aksi hâlde
+/// eski oturum bir sonraki açılışta yine kendiliğinden bağlanıyor ve kullanıcı
+/// "çıkış yaptım ama WhatsApp bağlı" durumunda kalıyordu.
 pub fn delete_wa_session(app_dir: &Path) -> Result<(), String> {
+    let mut hata = None;
+    for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
+        let path = app_dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        if let Err(e) = std::fs::remove_file(&path) {
+            hata = Some(format!("{}: {}", name, e));
+        }
+    }
+
+    // Kalanları boşalt: sıfır baytlık dosyayı wa-rs açamaz, açılışta yeni cihaz
+    // kimliği üretilir ve QR okutulur. Eski oturum artık kullanılamaz.
     for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
         let path = app_dir.join(name);
         if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Oturum dosyası silinemedi ({}): {}", name, e))?;
+            std::fs::write(&path, b"").map_err(|e| {
+                format!(
+                    "Oturum silinemedi ({}). Uygulamayı kapatıp tekrar deneyin: {}",
+                    hata.clone().unwrap_or_else(|| name.to_string()),
+                    e
+                )
+            })?;
         }
     }
     Ok(())
@@ -1565,6 +1588,31 @@ mod tests {
             file_name: file_name.to_string(),
             kind,
         }
+    }
+
+    #[test]
+    fn cikis_dosya_silinemese_de_oturumu_gecersiz_kilar() {
+        let dir = std::env::temp_dir().join(format!("wa_logout_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("wa_bot.db");
+        std::fs::write(&db, b"eski-oturum-icerigi").unwrap();
+        std::fs::write(dir.join("wa_bot.db-wal"), b"wal").unwrap();
+
+        delete_wa_session(&dir).unwrap();
+
+        // Dosyalar ya silinir ya sıfırlanır: her iki durumda da eski oturum yok.
+        for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
+            let p = dir.join(name);
+            if p.exists() {
+                assert_eq!(
+                    std::fs::metadata(&p).unwrap().len(),
+                    0,
+                    "{} boş değil",
+                    name
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

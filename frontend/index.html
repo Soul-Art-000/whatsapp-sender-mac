@@ -933,6 +933,9 @@
 
     listen('whatsapp_logged_out', () => {
       applyStatus('offline');
+      // QR penceresi açık kaldıysa yeni QR'ı bekleyebilsin diye durumu sıfırla.
+      $('qrStatus').textContent = 'Oturum silindi. QR kod bekleniyor...';
+      stopQrWatchdog();
       const s = $('sendStatus');
       s.classList.remove('hidden');
       s.textContent = 'WhatsApp oturumu silindi. Bağlanmak için QR kodu okutun.';

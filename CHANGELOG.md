@@ -3,6 +3,20 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.4] - 2026-10-20
+
+### Fixed
+- **"Çıkış" sonrası QR gelmiyordu ve oturum geri geliyordu.** Çıkış, oturum
+  dosyasını silmeye çalışıp başarısız olunca (DB kilidi / izin) hata dönüyor,
+  `client` zaten `None` olduğu için hiçbir şey değişmiyordu; arayüz "oturum
+  silindi" yazıyor ama WhatsApp bağlı kalıyor ve yeni QR üretilmiyordu.
+  Artık dosya silinemezse boşaltılır: oturum her hâlükârda geçersiz olur,
+  sonraki bağlantıda yeni cihaz kimliği üretilip QR gösterilir.
+- `LoggedOut` olayı artık `whatsapp_logged_out` olarak yayınlanıyor (eskiden
+  `whatsapp_error` idi); QR penceresi bu olayda yeniden "QR bekleniyor"
+  durumuna dönüyor.
+- Çıkış sonucu `app.log`'a yazılıyor ("oturum silindi" / "çıkış HATASI: ...").
+
 ## [0.5.3] - 2026-10-20
 
 ### Fixed

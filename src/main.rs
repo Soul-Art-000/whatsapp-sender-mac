@@ -109,7 +109,12 @@ async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
     let dir = data_dir(&app_handle);
     let state = app_handle.state::<AppState>();
     shared::log_line(&dir, "çıkış: oturum siliniyor");
-    shared::logout_session(&state, &dir).await?;
+    let sonuc = shared::logout_session(&state, &dir).await;
+    match &sonuc {
+        Ok(()) => shared::log_line(&dir, "çıkış: oturum silindi"),
+        Err(e) => shared::log_line(&dir, &format!("çıkış HATASI: {}", e)),
+    }
+    sonuc?;
     *state.last_qr.lock().unwrap() = None;
     let _ = app_handle.emit_all("whatsapp_logged_out", ());
     Ok(())
