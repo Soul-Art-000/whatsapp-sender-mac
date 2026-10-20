@@ -105,19 +105,20 @@ async fn disconnect_whatsapp(state: State<'_, AppState>) -> Result<(), String> {
 /// yapılan şey: bağlantıyı kesip yerel oturum dosyalarını silmek. Telefondaki
 /// "Bağlı cihazlar" kaydını kullanıcı telefonundan kaldırır (arayüz söylüyor).
 #[command]
-async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
+async fn logout_whatsapp(app_handle: AppHandle) -> Result<String, String> {
     let dir = data_dir(&app_handle);
     let state = app_handle.state::<AppState>();
     shared::log_line(&dir, "çıkış: oturum siliniyor");
     let sonuc = shared::logout_session(&state, &dir).await;
-    match &sonuc {
-        Ok(()) => shared::log_line(&dir, "çıkış: oturum silindi"),
-        Err(e) => shared::log_line(&dir, &format!("çıkış HATASI: {}", e)),
-    }
-    sonuc?;
     *state.last_qr.lock().unwrap() = None;
     let _ = app_handle.emit_all("whatsapp_logged_out", ());
-    Ok(())
+
+    // Arayüze kanıt döndür: bağlantı gerçekten koptu mu, oturum dosyası gitti mi?
+    // (Kullanıcı "çıkmıyor" dediğinde tartışma değil ölçüm olsun.)
+    let durum = shared::logout_report(&state, &dir);
+    shared::log_line(&dir, &format!("çıkış sonucu: {}", durum));
+    sonuc?;
+    Ok(durum)
 }
 
 /// WhatsApp istemcisini başlatır (arka planda).

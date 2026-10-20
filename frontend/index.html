@@ -622,7 +622,7 @@
       const btn = $('waLogoutBtn');
       btn.disabled = true;
       try {
-        await invoke('logout_whatsapp');
+        const rapor = await invoke('logout_whatsapp');
         // Olay (whatsapp_logged_out) gelmese de arayüz kendi başına doğru
         // duruma geçmeli: eski oturumda bu olay kaçınca "bağlı" görünüm
         // kalıyor ve yeni QR istenemiyordu.
@@ -631,6 +631,8 @@
         $('qrModal').classList.add('flex');
         $('qrModal').classList.remove('hidden');
         $('qrStatus').textContent = 'QR kod bekleniyor...';
+        // Ölçüm: "çıktı mı" sorusunu kanıtla yanıtla.
+        if (rapor) $('qrHelp').textContent = 'Çıkış sonucu — ' + rapor;
         $('qrcode').innerHTML = '';
         $('qrHelp').classList.add('hidden');
         const s = $('sendStatus');

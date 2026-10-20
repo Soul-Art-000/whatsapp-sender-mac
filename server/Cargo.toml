@@ -1,6 +1,6 @@
 [package]
 name = "whatsapp-server"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2021"
 description = "whatsapp-sender için headless sunucu (HTTP API + WebSocket)"
 license = "MIT"

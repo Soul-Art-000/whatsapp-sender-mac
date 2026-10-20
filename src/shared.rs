@@ -1600,6 +1600,33 @@ pub fn delete_wa_session(app_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Çıkış sonrası durumu insan okur biçimde özetler (arayüzde gösterilir).
+pub fn logout_report(state: &AppState, app_dir: &Path) -> String {
+    let bagli = state
+        .client
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|c| c.is_connected() || c.is_logged_in())
+        .unwrap_or(false);
+    let mut kalan = Vec::new();
+    for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
+        let p = app_dir.join(name);
+        if let Ok(m) = std::fs::metadata(&p) {
+            kalan.push(format!("{} ({} bayt)", name, m.len()));
+        }
+    }
+    format!(
+        "bağlantı: {} · oturum dosyası: {}",
+        if bagli { "HÂLÂ BAĞLI" } else { "kesildi" },
+        if kalan.is_empty() {
+            "silindi".to_string()
+        } else {
+            kalan.join(", ")
+        }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

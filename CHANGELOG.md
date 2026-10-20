@@ -3,6 +3,14 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.7] - 2026-10-20
+
+### Added
+- **Çıkış sonucu arayüzde gösteriliyor.** `logout_whatsapp` artık bir rapor
+  döndürür ("bağlantı: kesildi · oturum dosyası: silindi") ve QR penceresinde
+  görünür. "Çıktı mı çıkmadı mı" sorusu tahmin yerine ölçümle yanıtlanır;
+  aynı satır `app.log`'a da yazılır.
+
 ## [0.5.6] - 2026-10-20
 
 ### Fixed
