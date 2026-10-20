@@ -6,7 +6,8 @@
 //! ikilisinde (`src/bin/whatsapp-server.rs`) HTTP/WS katmanıyla kullanılır.
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::{
@@ -116,6 +117,14 @@ async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
 
 /// WhatsApp istemcisini başlatır (arka planda).
 fn spawn_connect(app_handle: AppHandle) {
+    // Her bağlanma yeni bir kuşak açar; önceki turun kapanışı artık etkisiz.
+    let running = {
+        let state = app_handle.state::<AppState>();
+        let token = Arc::new(AtomicBool::new(true));
+        *state.running.lock().unwrap() = Some(token.clone());
+        token
+    };
+    let stop_slot = app_handle.state::<AppState>().stop_handle.clone();
     let connecting = {
         let state = app_handle.state::<AppState>();
         if state.client.lock().unwrap().is_some() {
@@ -156,7 +165,16 @@ fn spawn_connect(app_handle: AppHandle) {
 
         let dir = data_dir(&handle);
         shared::log_line(&dir, "bağlantı başlatıldı");
-        if let Err(e) = shared::run_bot(&dir, emit, on_client).await {
+        let result = shared::run_bot(&dir, emit, on_client, stop_slot).await;
+        // Bu tur `running` sırasında "Kes"/"Çıkış" ile öldürülmüşse kapanış
+        // temizliği yapılmaz: aksi hâlde o arada başlamış YENİ bağlantı
+        // `client = None` yapılıp arayüz "offline"a düşüyor, kullanıcı çıkış
+        // yaptığını sanırken uygulama yine WhatsApp'a bağlı kalıyordu.
+        if !running.load(Ordering::SeqCst) {
+            connecting.store(false, Ordering::SeqCst);
+            return;
+        }
+        if let Err(e) = result {
             shared::log_line(&dir, &format!("bağlantı hatası: {}", e));
             let _ = handle.emit_all("whatsapp_error", e);
         }

@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -331,10 +331,20 @@ fn spawn_connect(srv: Server) {
             *state.client.lock().unwrap() = Some(client);
         };
 
-        if let Err(e) = shared::run_bot(&srv.app_dir, emit, on_client).await {
+        let token = Arc::new(AtomicBool::new(true));
+        *srv.state.running.lock().unwrap() = Some(token.clone());
+        if let Err(e) =
+            shared::run_bot(&srv.app_dir, emit, on_client, srv.state.stop_handle.clone()).await
+        {
             let _ = srv
                 .events
                 .send(json!({ "event": "whatsapp_error", "payload": e }));
+        }
+        // Tur "Kes"/"Çıkış" ile öldürüldüyse kapanış temizliği yapılmaz; yoksa
+        // o arada başlamış yeni bağlantı düşürülür.
+        if !token.load(Ordering::SeqCst) {
+            srv.state.connecting.store(false, Ordering::SeqCst);
+            return;
         }
         srv.state.connecting.store(false, Ordering::SeqCst);
         *srv.state.client.lock().unwrap() = None;

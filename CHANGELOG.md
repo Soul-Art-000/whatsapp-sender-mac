@@ -3,6 +3,22 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.3] - 2026-10-20
+
+### Fixed
+- **"Çıkış" / "Kes" WhatsApp bağlantısını kesmiyordu.** İki kök neden vardı:
+  1. `disconnect_session`, `client` alanı boşsa (`None`) hemen
+     "Zaten bağlı değil." dönüp **hiçbir şey yapmıyordu**; oysa
+     `spawn_connect` ile bağlanma/QR turu arka planda hâlâ sürebiliyor.
+     Artık işlem her durumda ilerler.
+  2. `bot.run()` ayrı bir görev açar ve bu görevin handle'ı tutulmuyordu.
+     Oturum yeniden bağlanma döngüsünü kendi sürdürdüğü için, istemci nesnesi
+     düşürülse bile WhatsApp bağlı kalıyordu. Artık handle `AppState`'te
+     saklanıyor ve "Kes"/"Çıkış" onu `abort` ediyor.
+- Eski bağlanma turunun kapanış temizliği artık yeni bağlantıya dokunmuyor
+  (`running` jetonu): çıkıştan hemen sonra arayüz "offline"a düşüp bağlantıyı
+  bozması engellendi. Aynı düzeltme sunucu modunda da yapıldı.
+
 ## [0.5.2] - 2026-10-14
 
 ### Fixed

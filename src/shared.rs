@@ -31,6 +31,10 @@ pub struct AppState {
     /// En son üretilen QR kodu. Arayüz açılmadan/bağlanmadan önce üretilirse
     /// kaybolmasın diye saklanır (sunucu modunda zaten böyleydi).
     pub last_qr: Mutex<Option<String>>,
+    /// Çalışan `run_bot` turunun canlılık anahtarı; "Kes"/"Çıkış" `false` yapar.
+    pub running: Mutex<Option<Arc<AtomicBool>>>,
+    /// `bot.run()` görevinin handle'ı; "Kes"/"Çıkış" bunu abort eder.
+    pub stop_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl AppState {
@@ -42,6 +46,8 @@ impl AppState {
             connecting: Arc::new(AtomicBool::new(false)),
             busy: Arc::new(AtomicBool::new(false)),
             last_qr: Mutex::new(None),
+            running: Mutex::new(None),
+            stop_handle: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1403,7 +1409,12 @@ pub fn wa_status(client: &Option<Arc<wa_rs::Client>>) -> String {
 /// wa-rs kopan bağlantıyı kendi içinde (artan beklemeyle) yeniden kurar;
 /// bizim işimiz istemciyi ayakta tutmak ve olayları `emit` ile bildirmek.
 /// Olay adları/yükleri her iki arayüzde de aynıdır (`map_event`).
-pub async fn run_bot<E, F>(app_dir: &Path, emit: E, on_client: F) -> Result<(), String>
+pub async fn run_bot<E, F>(
+    app_dir: &Path,
+    emit: E,
+    on_client: F,
+    stop_slot: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+) -> Result<(), String>
 where
     E: Fn(&str, serde_json::Value) + Clone + Send + Sync + 'static,
     F: FnOnce(Arc<wa_rs::Client>) + Send + 'static,
@@ -1434,13 +1445,16 @@ where
         .map_err(|e| format!("WhatsApp istemcisi başlatılamadı: {}", e))?;
 
     on_client(bot.client());
+    // `run()` yeni bir görev açar; onu öldürebilmek için handle'ı dışarı ver.
+    let wa_handle = bot.run().await.map_err(|e| format!("WhatsApp bağlantısı kurulamadı: {}", e))?;
+    // Çalışma süresi handle'ı dışarı verilir: "Kes"/"Çıkış" bu handle'ı abort
+    // eder. `bot` düşürülse bile süren `run()` döngüsü kendiliğinden ölmez ve
+    // oturum yeniden bağlanırdı; çıkış bu yüzden etkisiz kalıyordu.
+    *stop_slot.lock().unwrap() = Some(wa_handle);
     emit("whatsapp_connecting", serde_json::Value::Null);
-
-    let _ = bot
-        .run()
-        .await
-        .map_err(|e| format!("WhatsApp bağlantısı kurulamadı: {}", e))?
-        .await;
+    // Görev kendi içinde sürer; bağlantı bittiğinde await'in dönmesi için
+    // sonsuza kadar beklenir (abort edilirse bu future düşer).
+    std::future::pending::<()>().await;
     Ok(())
 }
 
@@ -1452,23 +1466,42 @@ where
 /// kalıyordu. Burada otomatik yeniden bağlanma kapatılır, bağlantı gerçekten
 /// düşene kadar kısa bir döngüyle tekrar denenir ve istemci düşürülür.
 pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
-    let client = state
-        .client
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "Zaten bağlı değil.".to_string())?;
+    // Önce eldeki istemci düşürülür (kilidi tutarken await yok).
+    let client = {
+        let mut slot = state.client.lock().unwrap();
+        slot.take()
+    };
+    // Bu tur artık eski: kapanışı yeni bağlantıya dokunmasın.
+    if let Some(token) = state.running.lock().unwrap().as_ref() {
+        token.store(false, Ordering::SeqCst);
+    }
+    // Sürüp giden `bot.run()` döngüsünü öldür: istemci nesnesini düşürmek
+    // yetmiyordu, döngü kendi kendine yeniden bağlanıyordu.
+    if let Some(handle) = state.stop_handle.lock().unwrap().take() {
+        handle.abort();
+    }
 
-    // Süren gönderim varsa dursun; yoksa bağlantı kesilse bile mesaj akmaya devam eder.
-    state.stop.store(true, Ordering::SeqCst);
-    client.enable_auto_reconnect.store(false, Ordering::Relaxed);
-
-    for _ in 0..20 {
-        client.disconnect().await;
-        if !client.is_connected() {
-            break;
+    // `client` None olsa bile bağlanma/QR turu arka planda sürebiliyor
+    // (spawn_connect). Eskiden burada "Zaten bağlı değil." dönülüyordu ve
+    // kullanıcı çıkış yaptığını sanırken tur yeniden bağlanıyordu — bu yüzden
+    // işlem her durumda sürer.
+    match client {
+        Some(client) => {
+            // Süren gönderim varsa dursun; yoksa bağlantı kesilse bile mesaj akmaya devam eder.
+            state.stop.store(true, Ordering::SeqCst);
+            client.enable_auto_reconnect.store(false, Ordering::Relaxed);
+            for _ in 0..20 {
+                client.disconnect().await;
+                if !client.is_connected() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        None => {
+            // İstemci hiç oluşmadıysa yalnızca sürüp giden bağlanma turu durdurulur.
+            state.stop.store(true, Ordering::SeqCst);
+        }
     }
 
     // Arayüz ve gönderim yolu artık "bağlı" görmesin.
