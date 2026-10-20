@@ -619,14 +619,27 @@
         "Devam edilsin mi?"
       );
       if (!ok) return;
+      const btn = $('waLogoutBtn');
+      btn.disabled = true;
       try {
         await invoke('logout_whatsapp');
+        // Olay (whatsapp_logged_out) gelmese de arayüz kendi başına doğru
+        // duruma geçmeli: eski oturumda bu olay kaçınca "bağlı" görünüm
+        // kalıyor ve yeni QR istenemiyordu.
+        lastStatus = null;
         applyStatus('offline');
+        $('qrModal').classList.add('flex');
+        $('qrModal').classList.remove('hidden');
+        $('qrStatus').textContent = 'QR kod bekleniyor...';
+        $('qrcode').innerHTML = '';
+        $('qrHelp').classList.add('hidden');
         const s = $('sendStatus');
         s.classList.remove('hidden');
         s.textContent = 'Oturum silindi. Bağlanmak için QR kodu okutun.';
       } catch (e) {
         alert("Çıkış yapılamadı: " + e);
+      } finally {
+        btn.disabled = false;
       }
     };
 
@@ -902,6 +915,10 @@
       $('qrModal').classList.replace('flex', 'hidden');
     };
 
+    // Durum önbelleği: 5 sn'lik tazeleme aynı değeri tekrar uygulamasın.
+    // (Çıkışta null'a alınır ki yeniden uygulanabilsin.)
+    let lastStatus = null;
+
     listen('whatsapp_connecting', () => {
       $('qrStatus').textContent = 'Bağlanıyor...';
     });
@@ -939,6 +956,7 @@
     });
 
     listen('whatsapp_logged_out', () => {
+      lastStatus = null; // yoksa 5 sn'lik tazeleme "değişmedi" sanıp atlar
       applyStatus('offline');
       // QR penceresi açık kaldıysa yeni QR'ı bekleyebilsin diye durumu sıfırla.
       $('qrStatus').textContent = 'Oturum silindi. QR kod bekleniyor...';
@@ -957,7 +975,6 @@
     // Durum her 5 saniyede tazelenir: olaylar kaçsa ya da wa-rs kendi içinde
     // yeniden bağlansa bile arayüz gerçeği gösterir (eskiden "Bağlı (Hazır)" ile
     // "Bağlantı kapandı." aynı anda görünebiliyordu).
-    let lastStatus = null;
     setInterval(async () => {
       try {
         const st = await invoke('get_wa_status');

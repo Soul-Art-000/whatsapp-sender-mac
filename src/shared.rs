@@ -582,6 +582,7 @@ pub fn push_pending(summary: &mut SendSummary, rest: &[&Contact]) {
 /// - Ekleri (resim/belge) bir kez yükler, "Durdur" ile bekleme sırasında da kesilebilir.
 // Argümanlar tek tek geçiliyor: hepsi gönderim çağrısının doğal parçası ve bir
 // seçenek struct'ı sarmalamak iki çağıran için de dolaylılık katardı.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_batch<F: Fn(String) + Send>(
     client: Arc<wa_rs::Client>,
     contacts: &[Contact],
@@ -1495,9 +1496,13 @@ pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
         token.store(false, Ordering::SeqCst);
     }
     // Sürüp giden `bot.run()` döngüsünü öldür: istemci nesnesini düşürmek
-    // yetmiyordu, döngü kendi kendine yeniden bağlanıyordu.
-    if let Some(handle) = state.stop_handle.lock().unwrap().take() {
+    // yetmiyordu, döngü kendi kendine yeniden bağlanıyordu. Abort'un etkili
+    // olması beklenir — aksi hâlde çağrı dönerken döngü hâlâ soket tutuyor
+    // olabilir ve yerel oturum dosyası kilitli kalır.
+    let handle = { state.stop_handle.lock().unwrap().take() };
+    if let Some(handle) = handle {
         handle.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
     }
 
     // `client` None olsa bile bağlanma/QR turu arka planda sürebiliyor
@@ -1533,9 +1538,18 @@ pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
 /// Bağlı değilken de çalışır — oturum dosyası kalırsa uygulama bir sonraki
 /// açılışta yine kendiliğinden bağlanmaya çalışırdı.
 pub async fn logout_session(state: &AppState, app_dir: &Path) -> Result<(), String> {
-    let _ = disconnect_session(state).await;
+    disconnect_session(state).await?;
     wait_client_stopped(state).await;
-    delete_wa_session(app_dir)
+    // Oturum dosyası silinemezse çıkış YİNE de başarılı sayılır: kullanıcı için
+    // önemli olan bağlantının gitmesi. Dosya boşaltıldıysa eski oturum zaten
+    // kullanılamaz; hata yalnızca günlüğe düşer.
+    match delete_wa_session(app_dir) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            log_line(app_dir, &format!("çıkış: dosya temizliği başarısız: {}", e));
+            Ok(())
+        }
+    }
 }
 
 /// İstemci tamamen durana kadar bekler (oturum dosyası açıkken silinemez).

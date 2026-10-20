@@ -22,6 +22,9 @@ jobs:
       - run: cargo test -p whatsapp-server
       # Çekirdek (src/shared.rs) tauri'siz derlenir ve birim testleri vardır.
       - run: cargo test --no-default-features -p whatsapp-sender --lib
+      # Arayüz akışları (çıkış / QR) uçtan uca: sahte DOM + invoke ile
+      # index.html'in kendi JS'i çalıştırılır.
+      - run: node frontend/exit-flow.test.js
       # Bilgilendirici: bilinen güvenlik kayıtlarını raporlar, derlemeyi kırmaz.
       # (tauri v1 zincirinde kapatılamayan "unmaintained" kayıtları var; kırmızı
       # yapmak sinyali değersizleştirirdi.)

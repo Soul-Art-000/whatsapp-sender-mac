@@ -122,24 +122,20 @@ async fn logout_whatsapp(app_handle: AppHandle) -> Result<(), String> {
 
 /// WhatsApp istemcisini başlatır (arka planda).
 fn spawn_connect(app_handle: AppHandle) {
+    let state = app_handle.state::<AppState>();
+    if state.client.lock().unwrap().is_some() {
+        return; // zaten bağlı
+    }
+    if state.connecting.swap(true, Ordering::SeqCst) {
+        return; // bağlanma zaten sürüyor
+    }
     // Her bağlanma yeni bir kuşak açar; önceki turun kapanışı artık etkisiz.
-    let running = {
-        let state = app_handle.state::<AppState>();
-        let token = Arc::new(AtomicBool::new(true));
-        *state.running.lock().unwrap() = Some(token.clone());
-        token
-    };
-    let stop_slot = app_handle.state::<AppState>().stop_handle.clone();
-    let connecting = {
-        let state = app_handle.state::<AppState>();
-        if state.client.lock().unwrap().is_some() {
-            return; // zaten bağlı
-        }
-        if state.connecting.swap(true, Ordering::SeqCst) {
-            return; // bağlanma zaten sürüyor
-        }
-        state.connecting.clone()
-    };
+    // Jeton yalnızca gerçekten tur başlarken kurulur: "zaten bağlı" erken
+    // dönüşünde canlı turun jetonunu eziyordu.
+    let running = Arc::new(AtomicBool::new(true));
+    *state.running.lock().unwrap() = Some(running.clone());
+    let stop_slot = state.stop_handle.clone();
+    let connecting = state.connecting.clone();
 
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
@@ -175,15 +171,16 @@ fn spawn_connect(app_handle: AppHandle) {
         // temizliği yapılmaz: aksi hâlde o arada başlamış YENİ bağlantı
         // `client = None` yapılıp arayüz "offline"a düşüyor, kullanıcı çıkış
         // yaptığını sanırken uygulama yine WhatsApp'a bağlı kalıyordu.
+        // Bayrak her durumda ÖNCE düşürülür: `wait_client_stopped` buna bakıyor,
+        // yoksa "Çıkış" 15 saniye boşuna bekliyordu.
+        connecting.store(false, Ordering::SeqCst);
         if !running.load(Ordering::SeqCst) {
-            connecting.store(false, Ordering::SeqCst);
             return;
         }
         if let Err(e) = result {
             shared::log_line(&dir, &format!("bağlantı hatası: {}", e));
             let _ = handle.emit_all("whatsapp_error", e);
         }
-        connecting.store(false, Ordering::SeqCst);
         *handle.state::<AppState>().client.lock().unwrap() = None;
         shared::log_line(&dir, "bağlantı kapandı");
         let _ = handle.emit_all("whatsapp_disconnected", "Bağlantı kapandı.".to_string());
