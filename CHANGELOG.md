@@ -3,6 +3,26 @@
 Bu dosya [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) düzenini ve
 [Semantic Versioning](https://semver.org/lang/tr/) sürümlemeyi izler.
 
+## [0.5.6] - 2026-10-20
+
+### Fixed
+- **"Çıkış" basılınca arayüz "bağlı" kalıyor, QR istenemiyordu.** Düğme
+  sonucu yalnızca `whatsapp_logged_out` olayına bırakıyordu; olay kaçınca
+  (veya sıra yarışında düşünce) görünüm değişmiyordu. Artık düğme kendi
+  başarısından sonra durumu doğrudan `offline` yapar, QR penceresini
+  "QR kod bekleniyor" durumuna alır ve "Bağlan"ı etkinleştirir.
+- `spawn_connect` erken dönüşleri ("zaten bağlı"/"bağlanma sürüyor") canlı
+  bağlanma turunun `running` jetonunu eziyordu → o turun kapanışı yeni
+  bağlantıyı düşürebiliyordu.
+- `connecting` bayrağı kapanışta önce düşürülüyor; "Çıkış" artık 15 saniye
+  boşuna beklemiyor.
+- Abort edilen `run()` görevi bekleniyor: oturum dosyası kilitli kalmıyor.
+- Çıkış, dosya temizliği başarısız olsa bile başarılı sayılır (bağlantı gitti).
+- `lastStatus` tanım-kullanım sırası hatası (TDZ) giderildi.
+- `frontend/exit-flow.test.js` eklendi ve CI'ya bağlandı: sahte DOM + invoke
+  ile `index.html`'in kendi JS'i çalıştırılıp çıkış akışı doğrulanıyor.
+- Clippy `too_many_arguments` (CI kırmızısı) giderildi.
+
 ## [0.5.5] - 2026-10-20
 
 ### Added
