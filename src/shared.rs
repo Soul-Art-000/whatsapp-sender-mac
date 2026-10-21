@@ -986,6 +986,8 @@ pub fn build_document_message(
 pub fn map_event(event: &Event) -> Option<(&'static str, String)> {
     match event {
         Event::PairingQrCode { code, .. } => Some(("qr_code", code.clone())),
+        // QR yerine telefon numarasıyla eşleştirme: 8 karakterli kodu arayüze ver.
+        Event::PairingCode { code, .. } => Some(("pairing_code", code.clone())),
         Event::Connected(_) | Event::PairSuccess(_) => Some(("whatsapp_ready", String::new())),
         Event::Disconnected(_) => Some((
             "whatsapp_disconnected",
@@ -1438,6 +1440,17 @@ where
 {
     std::fs::create_dir_all(app_dir).map_err(|e| e.to_string())?;
     let store_path = app_dir.join("wa_bot.db");
+
+    // BOZUK_OTURUM: 0 baytlık dosya wa-rs'i kilitler ("cihaz bağlanamadı").
+    // Açılışta böyle bir kalıntı varsa temizle, yeni kimlik üretilsin.
+    if let Ok(meta) = std::fs::metadata(&store_path) {
+        if meta.len() == 0 {
+            let _ = std::fs::remove_file(&store_path);
+            for ek in ["-wal", "-shm"] {
+                let _ = std::fs::remove_file(app_dir.join(format!("wa_bot.db{}", ek)));
+            }
+        }
+    }
     let backend = Arc::new(
         SqliteStore::new(&store_path.to_string_lossy())
             .await
@@ -1514,12 +1527,12 @@ pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
             // Süren gönderim varsa dursun; yoksa bağlantı kesilse bile mesaj akmaya devam eder.
             state.stop.store(true, Ordering::SeqCst);
             client.enable_auto_reconnect.store(false, Ordering::Relaxed);
-            for _ in 0..20 {
+            for _ in 0..10 {
                 client.disconnect().await;
                 if !client.is_connected() {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                tokio::time::sleep(Duration::from_millis(150)).await;
             }
         }
         None => {
@@ -1531,6 +1544,40 @@ pub async fn disconnect_session(state: &AppState) -> Result<(), String> {
     // Arayüz ve gönderim yolu artık "bağlı" görmesin.
     *state.client.lock().unwrap() = None;
     Ok(())
+}
+
+/// QR yerine telefon numarasıyla eşleştirme başlatır.
+///
+/// Dönen 8 karakterli kod telefonda
+/// "Bağlı cihazlar → Cihaz bağla → Telefon numarasıyla bağlan" ekranına girilir.
+/// QR ile aynı anda çalışabilir; hangisi önce tamamlanırsa o kazanır.
+pub async fn pair_with_phone(
+    state: &AppState,
+    phone: &str,
+) -> Result<String, String> {
+    // Numara: yalnızca rakam, ülke kodu dahil (ör. 905551234567)
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 10 || digits.len() > 15 {
+        return Err(format!(
+            "Geçersiz numara: {} hane. Ülke koduyla, yalnızca rakam girin (ör. 905551234567).",
+            digits.len()
+        ));
+    }
+
+    let client = state
+        .client
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "Önce bağlantı başlatılmalı (connect_whatsapp).".to_string())?;
+
+    client
+        .pair_with_code(wa_rs::pair_code::PairCodeOptions {
+            phone_number: digits,
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| format!("Eşleştirme kodu alınamadı: {}", e))
 }
 
 /// Çıkış: bağlantıyı keser ve yerel oturumu siler.
@@ -1554,11 +1601,13 @@ pub async fn logout_session(state: &AppState, app_dir: &Path) -> Result<(), Stri
 
 /// İstemci tamamen durana kadar bekler (oturum dosyası açıkken silinemez).
 pub async fn wait_client_stopped(state: &AppState) {
-    for _ in 0..60 {
+    // Çıkışı kullanıcı bekliyor: toplam bekleme ~2 sn (eski 15 sn arayüzde
+    // "çıkmıyor" gibi görünüyordu).
+    for _ in 0..20 {
         if !state.connecting.load(Ordering::SeqCst) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -1583,20 +1632,49 @@ pub fn delete_wa_session(app_dir: &Path) -> Result<(), String> {
         }
     }
 
-    // Kalanları boşalt: sıfır baytlık dosyayı wa-rs açamaz, açılışta yeni cihaz
-    // kimliği üretilir ve QR okutulur. Eski oturum artık kullanılamaz.
+    // Silinemeyen dosyayı SIFIRLAMA (0 baytlık wa_bot.db wa-rs'i kilitliyor ve
+    // "cihaz bağlanamadı" hatasına yol açıyordu). Bunun yerine adını değiştir:
+    // wa-rs yeni bir dosya açar, eski kalıntı bir sonraki açılışta silinir.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     for name in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
         let path = app_dir.join(name);
-        if path.exists() {
-            std::fs::write(&path, b"").map_err(|e| {
-                format!(
-                    "Oturum silinemedi ({}). Uygulamayı kapatıp tekrar deneyin: {}",
-                    hata.clone().unwrap_or_else(|| name.to_string()),
-                    e
-                )
-            })?;
+        if !path.exists() {
+            continue;
+        }
+        let yedek = app_dir.join(format!("{}.eski-{}", name, stamp));
+        if std::fs::rename(&path, &yedek).is_err() {
+            // Ad değiştirme de olmuyorsa en azından boşaltmayı dene.
+            let _ = std::fs::write(&path, b"");
         }
     }
+
+    // Önceki çalıştırmalardan kalan .eski-* artıkları temizle (en fazla 5 tut).
+    if let Ok(entries) = std::fs::read_dir(app_dir) {
+        let mut eskiler: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.contains(".eski-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        eskiler.sort();
+        while eskiler.len() > 5 {
+            if let Some(p) = eskiler.first().cloned() {
+                let _ = std::fs::remove_file(p);
+                eskiler.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
+    let _ = hata; // eski hata mesajı artık kullanılmıyor
     Ok(())
 }
 

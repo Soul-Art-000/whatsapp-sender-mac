@@ -171,16 +171,23 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
             Ok(json!(result))
         }
         "connect_whatsapp" => {
-            // QR zaten üretildiyse (arayüz sonradan açıldı) onu tekrar göster;
-            // yoksa bağlanmayı başlat.
+            // Önbellekte QR olsa bile istemci yaşıyor mu bak. Ölü bir QR'ı
+            // tekrar göndermek "cihaz bağlanamadı" hatasına yol açıyordu:
+            // bağlantı düşmüş, QR bayat, yeni deneme hiç başlamıyordu.
+            let has_client = srv.state.client.lock().unwrap().is_some();
             let pending_qr = srv.last_qr.lock().unwrap().clone();
-            match pending_qr {
-                Some(code) => {
+
+            // Önce bekleyen QR'ı göster (arayüz hemen çizsin).
+            if has_client {
+                if let Some(code) = pending_qr {
                     let _ = srv
                         .events
                         .send(json!({ "event": "qr_code", "payload": code }));
                 }
-                None => spawn_connect(srv.clone()),
+            } else {
+                // İstemci yok: bayat QR'ı at, bağlantıyı sıfırdan başlat.
+                *srv.last_qr.lock().unwrap() = None;
+                spawn_connect(srv.clone());
             }
             Ok(Value::Null)
         }
@@ -191,6 +198,45 @@ async fn dispatch(srv: &Server, cmd: &str, args: Value) -> Result<Value, String>
         "disconnect_whatsapp" => {
             shared::disconnect_session(&srv.state).await?;
             Ok(Value::Null)
+        }
+        "import_session" => {
+            // Windows/masaüstü uygulamasında eşleştirilen oturumu sunucuya al.
+            // base64 gövde: {"db":"<base64>","name":"wa_bot.db"}
+            let a: HashMap<String, String> = parse_args(args)?;
+            let b64 = a.get("db").cloned().unwrap_or_default();
+            if b64.is_empty() {
+                return Err("Oturum verisi boş.".to_string());
+            }
+            let bytes = base64_decode(&b64)?;
+            if bytes.len() < 512 || bytes.len() > 64 * 1024 * 1024 {
+                return Err(format!("Oturum dosyası boyutu geçersiz: {} bayt", bytes.len()));
+            }
+            // SQLite imzası doğrula
+            if &bytes[..16] != b"SQLite format 3\0" {
+                return Err("Geçersiz oturum dosyası (SQLite değil).".to_string());
+            }
+            let dir = srv.app_dir.as_ref();
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            // Eski oturumu kapat ve temizle
+            let _ = shared::disconnect_session(&srv.state).await;
+            shared::wait_client_stopped(&srv.state).await;
+            for n in ["wa_bot.db", "wa_bot.db-wal", "wa_bot.db-shm"] {
+                let _ = std::fs::remove_file(dir.join(n));
+            }
+            std::fs::write(dir.join("wa_bot.db"), &bytes)
+                .map_err(|e| format!("Oturum yazılamadı: {}", e))?;
+            let _ = srv.events.send(json!({
+                "event": "session_imported",
+                "payload": format!("{} bayt", bytes.len())
+            }));
+            Ok(json!({ "ok": true, "bytes": bytes.len() }))
+        }
+        "pair_phone" => {
+            // QR yerine numara ile eşleştirme: 8 karakterli kod üretir.
+            let a: HashMap<String, String> = parse_args(args)?;
+            let phone = a.get("phone").cloned().unwrap_or_default();
+            let code = shared::pair_with_phone(&srv.state, &phone).await?;
+            Ok(json!({ "code": code }))
         }
         "logout_whatsapp" => logout(srv).await,
         "send_whatsapp_messages" => send(srv, parse_args(args)?).await,
@@ -573,4 +619,29 @@ async fn main() {
         .await
         .expect("port dinlenemedi");
     axum::serve(listener, app).await.expect("sunucu hata verdi");
+}
+
+// ---------------------------------------------------------------- yardımcılar
+/// Basit base64 çözücü (harici crate eklememek için).
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits = 0;
+    for c in s.bytes() {
+        if c == b'=' || c == b'\n' || c == b'\r' || c == b' ' {
+            continue;
+        }
+        let v = match T.iter().position(|&x| x == c) {
+            Some(v) => v as u32,
+            None => return Err(format!("Geçersiz base64 karakteri: {}", c)),
+        };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
 }

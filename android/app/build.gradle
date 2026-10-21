@@ -7,6 +7,20 @@ plugins {
 }
 
 android {
+    signingConfigs {
+        release {
+            // Keystore ve parolalar YALNIZCA ortam değişkenlerinden gelir.
+            // Yoksa release derlemesi debug anahtarına düşer (CI bunu kontrol eder).
+            def ksPath = System.getenv("WA_KEYSTORE")
+            if (ksPath != null && !ksPath.isEmpty() && file(ksPath).exists()) {
+                storeFile file(ksPath)
+                storePassword System.getenv("WA_STORE_PASS")
+                keyAlias System.getenv("WA_KEY_ALIAS") ?: "wabulk"
+                keyPassword System.getenv("WA_KEY_PASS") ?: System.getenv("WA_STORE_PASS")
+            }
+        }
+    }
+
     namespace 'com.salihbayrak.wabulk'
     compileSdk 34
 
@@ -14,15 +28,19 @@ android {
         applicationId "com.salihbayrak.wabulk"
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "0.2.0"
     }
 
     buildTypes {
         release {
-            minifyEnabled false
-            // Kişisel kullanım: imzalama için CI'da debug anahtarı kullanılır.
-            signingConfig signingConfigs.debug
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Keystore tanımlıysa release, değilse debug anahtarı (sideload).
+            signingConfig signingConfigs.release.storeFile != null
+                ? signingConfigs.release
+                : signingConfigs.debug
         }
     }
 

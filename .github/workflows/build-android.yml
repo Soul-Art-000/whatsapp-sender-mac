@@ -1,9 +1,7 @@
-name: Build Android APK
+name: Build Android APK (signed)
 
 # Telefonda çalışan sürüm: WhatsApp Web protokolü yerine telefonun KENDİ
-# WhatsApp uygulamasını erişilebilirlik servisiyle otomatik kullanır
-# (aynı telefon kendini "bağlı cihaz" olarak ekleyemez — QR'ı kendi
-# kamerasıyla okutması gerekirdi).
+# WhatsApp uygulamasını erişilebilirlik servisiyle otomatik kullanır.
 
 on:
   push:
@@ -17,7 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  apk:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,32 +31,70 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: APK derle (debug imzalı, sideload için)
+      # Keystore: WA_KEYSTORE_B64 (base64) + parolalar secrets'tan gelir.
+      # Yoksa debug anahtarıyla imzalanır (sideload için yeterli).
+      - name: Keystore hazırla
         working-directory: android
-        run: gradle assembleDebug --no-daemon
+        env:
+          KS_B64: ${{ secrets.WA_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.WA_STORE_PASS }}
+          KEY_PASS: ${{ secrets.WA_KEY_PASS }}
+          KEY_ALIAS: ${{ secrets.WA_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/wa-release.keystore"
+            echo "WA_KEYSTORE=$RUNNER_TEMP/wa-release.keystore" >> $GITHUB_ENV
+            echo "WA_STORE_PASS=$KS_PASS" >> $GITHUB_ENV
+            echo "WA_KEY_PASS=$KEY_PASS" >> $GITHUB_ENV
+            echo "WA_KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
+            echo "RELEASE KEYS: var"
+          else
+            echo "RELEASE KEYS: yok -> debug imzalama"
+          fi
+
+      - name: APK derle
+        working-directory: android
+        run: |
+          if [ -n "$WA_KEYSTORE" ]; then
+            gradle assembleRelease bundleRelease --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
 
       - name: Sürüm oku
         id: ver
         run: |
-          V=$(grep -oP 'versionName "\K[^"]+' android/app/build.gradle)
-          echo "v=$V" >> "$GITHUB_OUTPUT"
-          echo "sürüm: $V"
+          V=$(grep -oP 'versionName "\K[^"]+' android/app/build.gradle | head -1)
+          C=$(grep -oP 'versionCode \K[0-9]+' android/app/build.gradle | head -1)
+          echo "name=$V" >> $GITHUB_OUTPUT
+          echo "code=$C" >> $GITHUB_OUTPUT
+          echo "Sürüm: $V ($C)"
 
-      - name: APK artefaktı
+      - name: İmza doğrula
+        working-directory: android
+        run: |
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          echo "APK: $APK"
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --print-certs "$APK" | head -6
+          else
+            BT=$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)
+            $ANDROID_HOME/build-tools/$BT/apksigner verify --print-certs "$APK" | head -6
+          fi
+
+      - name: Yükle (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: wabulk-apk-${{ steps.ver.outputs.name }}
+          path: |
+            android/app/build/outputs/apk/**/*.apk
+            android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: warn
 
-      - name: Yayınla (android-v<sürüm>)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
-          ls -la "$APK"
-          TAG="android-v${{ steps.ver.outputs.v }}"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Android APK v${{ steps.ver.outputs.v }}" --notes \
-              "Telefonda çalışan toplu mesaj gönderici (sideload). Kurulum: APK'yı indir, \"bilinmeyen kaynaklara izin ver\" diyerek kur, uygulamada erişilebilirlik + rehber izinlerini ver."
-          fi
-          gh release upload "$TAG" "$APK" --clobber
+      - name: Release'e ekle
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/app/build/outputs/apk/**/*.apk
+            android/app/build/outputs/bundle/**/*.aab
